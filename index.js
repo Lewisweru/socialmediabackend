@@ -1,13 +1,14 @@
-import express from "express";
-import cors from "cors";
-import mongoose from "mongoose";
-import dotenv from "dotenv";
-import { createServer } from "http";
-import { Server } from "socket.io";
-import accountRoutes from "./routes/Account.js";
-import orderRoutes from "./routes/Order.js";
-import listingRoutes from "./routes/listings.js";
-import userRoutes from "./routes/users.js"; // ✅ Ensure this import exist
+const express = require("express");
+const cors = require("cors");
+const mongoose = require("mongoose");
+const dotenv = require("dotenv");
+const { createServer } = require("http");
+const { Server } = require("socket.io");
+
+const accountRoutes = require("./routes/Account.js");
+const orderRoutes = require("./routes/Order.js");
+const listingRoutes = require("./routes/listings.js");
+const userRoutes = require("./routes/users.js"); 
 
 
 dotenv.config();
