@@ -7,8 +7,7 @@ import { Server } from "socket.io";
 import accountRoutes from "./routes/Account.js";
 import orderRoutes from "./routes/Order.js";
 import listingRoutes from "./routes/listings.js";
-import userRoutes from "./routes/users.js"; // ✅ Ensure this import exist
-
+import userRoutes from "./routes/users.js"; // ✅ Ensure this import exists
 
 dotenv.config();
 
@@ -47,7 +46,11 @@ app.use("/api/accounts", accountRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/listings", listingRoutes);
 app.use("/api/users", userRoutes);
-//app.use("/api/users", userRoutes); // Add this
+
+// ✅ Add a Ping Route for Keeping Backend Alive
+app.get("/ping", (req, res) => {
+  res.status(200).json({ message: "Server is alive! 🚀" });
+});
 
 // ✅ Start the Server
 const PORT = process.env.PORT || 3000;
