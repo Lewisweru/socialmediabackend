@@ -1,6 +1,6 @@
 import { Router } from "express";
-import passport from "../config/googleauth.js"; // Path to your googleauth.js file
-import User from "server/models/User.js";  // Ensure this path is correct
+import passport from "../services/googleauth.js"; // Path to your googleauth.js file
+import User from "models/User.js";  // Ensure this path is correct
 
 const router = Router();
 
