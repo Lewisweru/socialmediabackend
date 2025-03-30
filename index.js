@@ -4,10 +4,13 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import { createServer } from "http";
 import { Server } from "socket.io";
+import passport from "passport"; // ✅ Import passport
+import session from "express-session"; // ✅ For session management
 import accountRoutes from "./routes/Account.js";
 import orderRoutes from "./routes/Order.js";
 import listingRoutes from "./routes/listings.js";
 import userRoutes from "./routes/users.js"; // ✅ Ensure this import exists
+import authRoutes from "./routes/auth.js";  // ✅ Import your auth routes
 
 dotenv.config();
 
@@ -15,7 +18,7 @@ const app = express();
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: "http://localhost:5173",  // Update with your frontend URL
     methods: ["GET", "POST"]
   }
 });
@@ -24,6 +27,18 @@ const io = new Server(httpServer, {
 app.use(cors());
 app.use(express.json()); // ✅ Ensures JSON is parsed correctly
 app.use(express.urlencoded({ extended: true })); // ✅ Ensures form data is parsed
+
+// ✅ Session setup (For Passport.js session management)
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-secret-key',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set to true if using https
+}));
+
+// ✅ Initialize Passport.js
+app.use(passport.initialize());
+app.use(passport.session());
 
 // ✅ Debugging: Log incoming requests
 app.use((req, res, next) => {
@@ -46,6 +61,7 @@ app.use("/api/accounts", accountRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/listings", listingRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/auth", authRoutes); // ✅ Add auth routes here
 
 // ✅ Add a Ping Route for Keeping Backend Alive
 app.get("/ping", (req, res) => {

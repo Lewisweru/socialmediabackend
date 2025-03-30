@@ -1,26 +1,18 @@
-import express from "express";
-import User from "server\models\User.js";
+import { Router } from "express";
+import passport from "../config/googleauth.js"; // Path to your googleauth.js file
+import User from "server/models/User.js";  // Ensure this path is correct
 
-const router = express.Router();
+const router = Router();
 
-// ✅ Signup - Save Users in MongoDB
-router.post("/signup", async (req, res) => {
-  try {
-    const { uid, email } = req.body;
+// Route to initiate Google login
+router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-    // ✅ Check if user already exists
-    let user = await User.findOne({ uid });
-    if (user) return res.status(400).json({ error: "User already exists" });
-
-    // ✅ Create user in MongoDB
-    user = new User({ uid, email });
-    await user.save();
-
-    res.status(201).json({ message: "User registered successfully", userId: user._id });
-  } catch (error) {
-    console.error("❌ Signup Error:", error);
-    res.status(500).json({ error: "Signup failed", details: error.message });
-  }
-});
+// Callback route where Google will redirect after successful authentication
+router.get('/google/callback', 
+  passport.authenticate('google', {
+    failureRedirect: '/login',  // Redirect to login if authentication fails
+    successRedirect: '/'         // Redirect to home/dashboard on success
+  })
+);
 
 export default router;
