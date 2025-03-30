@@ -2,10 +2,11 @@ import mongoose from "mongoose";
 
 const UserSchema = new mongoose.Schema(
   {
-    googleId: { type: String, required: true, unique: true }, // Store Google ID
+    firebaseUid: { type: String, unique: true, sparse: true }, // For Firebase users
+    googleId: { type: String, unique: true, sparse: true }, // For Google OAuth users
     email: { type: String, required: true, unique: true },
     name: { type: String, required: true },
-    picture: { type: String }, // Optional: store the user's profile picture
+    picture: { type: String }, // Profile picture
   },
   { timestamps: true }
 );
