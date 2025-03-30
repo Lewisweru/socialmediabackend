@@ -1,11 +1,11 @@
 import express from "express";
 import session from "express-session";
-import MongoStore from "connect-mongo"; // Import connect-mongo
 import passport from "./config/googleAuth.js";
 import authRoutes from "./routes/auth.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import MongoStore from "connect-mongo"; // Import connect-mongo
 
 dotenv.config();
 
@@ -13,23 +13,17 @@ const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true })); // Allow frontend requests
+app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
 
-// Use MongoDB for session storage
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "supersecretkey", // Ensure this is stored in .env
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI, // MongoDB connection string
-      collectionName: "sessions", // Collection to store sessions
+      mongoUrl: process.env.MONGO_URI, // Ensure this is correctly set in .env
+      ttl: 14 * 24 * 60 * 60, // Session expires in 14 days
     }),
-    cookie: {
-      maxAge: 1000 * 60 * 60 * 24, // 1 day
-      secure: process.env.NODE_ENV === "production", // Secure in production
-      httpOnly: true,
-    },
   })
 );
 
