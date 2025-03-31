@@ -39,7 +39,6 @@ router.get("/current-user", (req, res) => {
 router.post("/firebase-user", async (req, res) => {
   try {
     const { firebaseUid, email, name, profilePic } = req.body;
-    console.log("🔥 Firebase User Data Received:", req.body);
 
     if (!firebaseUid || !email) {
       return res.status(400).json({ error: "Missing required fields" });
@@ -50,15 +49,12 @@ router.post("/firebase-user", async (req, res) => {
     if (!user) {
       user = new User({ firebaseUid, email, name, profilePic });
       await user.save();
-      console.log("✅ New Firebase User Created:", user);
-    } else {
-      console.log("🔄 Existing Firebase User Found:", user);
     }
 
-    res.status(201).json({ message: "User synced successfully", user });
+    res.json({ message: "User authenticated successfully", user });
   } catch (error) {
-    console.error("🚨 Firebase User Sync Error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    console.error("❌ Firebase User Auth Error:", error);
+    res.status(500).json({ error: "Internal Server Error" });
   }
 });
 
