@@ -44,7 +44,7 @@ router.post("/firebase-user", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    let user = await User.findOne({ firebaseUid });
+    let user = await User.findOne({ firebaseUid }); // ✅ Correct: Find by firebaseUid, not _id
 
     if (!user) {
       user = new User({ firebaseUid, email, name, profilePic });
@@ -57,5 +57,6 @@ router.post("/firebase-user", async (req, res) => {
     res.status(500).json({ error: "Internal Server Error" });
   }
 });
+
 
 export default router;
