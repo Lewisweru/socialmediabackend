@@ -1,8 +1,6 @@
-import mongoose from "mongoose";
-
 const UserSchema = new mongoose.Schema({
-  firebaseUid: { type: String, unique: true }, // Store Firebase UID
-  googleId: { type: String, unique: true }, // Store Google ID
+  _id: { type: String, required: true }, // 🔥 Use Firebase UID as `_id`
+  googleId: { type: String, unique: true },
   email: { type: String, required: true, unique: true },
   name: { type: String, required: true },
   profilePic: { type: String }

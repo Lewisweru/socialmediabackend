@@ -44,12 +44,13 @@ router.post("/firebase-user", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    let user = await User.findOne({ firebaseUid }); // ✅ Correct: Find by firebaseUid, not _id
+    let user = await User.findById(firebaseUid); // ✅ Correctly queries _id as Firebase UID
 
-    if (!user) {
-      user = new User({ firebaseUid, email, name, profilePic });
-      await user.save();
-    }
+      if (!user) {
+        user = new User({ _id: firebaseUid, email, name, profilePic }); // ✅ Sets Firebase UID as _id
+        await user.save();
+      }
+
 
     res.json({ message: "User authenticated successfully", user });
   } catch (error) {
