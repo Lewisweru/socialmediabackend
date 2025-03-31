@@ -1,3 +1,4 @@
+// index.js (Main Server File)
 import express from "express";
 import session from "express-session";
 import passport from "./config/googleAuth.js";
@@ -5,7 +6,6 @@ import authRoutes from "./routes/auth.js";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
-import MongoStore from "connect-mongo"; // Import connect-mongo
 
 dotenv.config();
 
@@ -13,22 +13,22 @@ const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
-
+app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true })); // Allow frontend requests
 app.use(
   session({
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET, // Store in .env
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGO_URI, // Ensure this is correctly set in .env
-      ttl: 14 * 24 * 60 * 60, // Session expires in 14 days
-    }),
   })
 );
-
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Debugging: Log session data
+app.use((req, res, next) => {
+  console.log("📦 Session Data:", req.session);
+  next();
+});
 
 // Routes
 app.use("/api/auth", authRoutes);
