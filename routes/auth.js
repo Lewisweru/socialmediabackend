@@ -1,5 +1,6 @@
 import express from "express";
 import passport from "../config/googleAuth.js";
+import User from "../models/User.js"; // ✅ Import User model
 
 const router = express.Router();
 
@@ -34,6 +35,7 @@ router.get("/current-user", (req, res) => {
   res.status(401).json({ message: "Not authenticated" });
 });
 
+// ✅ Fix: Ensure User model is imported before using it in Firebase user sync
 router.post("/firebase-user", async (req, res) => {
   try {
     const { firebaseUid, email, name, profilePic } = req.body;
