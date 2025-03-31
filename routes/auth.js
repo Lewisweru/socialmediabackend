@@ -1,29 +1,32 @@
 import express from "express";
-import passport from "../config/googleAuth.js"; // Import Google auth strategy
+import passport from "../config/googleAuth.js";
 
 const router = express.Router();
 
-// Start Google authentication
+// Google Authentication
 router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
-// Handle Google callback
+// Google OAuth Callback
 router.get(
   "/google/callback",
   passport.authenticate("google", { failureRedirect: "/login", session: true }),
   (req, res) => {
-    res.redirect(`${process.env.FRONTEND_URL}/dashboard`); // Redirect user after login
+    console.log("✅ User Authenticated:", req.user);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
   }
 );
 
 // Logout
-router.get("/logout", (req, res) => {
+router.get("/logout", (req, res, next) => {
   req.logout((err) => {
-    if (err) return res.status(500).json({ message: "Logout failed", error: err });
-    res.redirect(`${process.env.FRONTEND_URL}/login`);
+    if (err) return next(err);
+    req.session.destroy(() => {
+      res.redirect(`${process.env.FRONTEND_URL}/login`);
+    });
   });
 });
 
-// Get the current logged-in user
+// Get Current Authenticated User
 router.get("/current-user", (req, res) => {
   if (req.isAuthenticated()) {
     return res.json(req.user);
