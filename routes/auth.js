@@ -34,4 +34,23 @@ router.get("/current-user", (req, res) => {
   res.status(401).json({ message: "Not authenticated" });
 });
 
+router.post("/firebase-user", async (req, res) => {
+  try {
+    const { firebaseUid, email, name, profilePic } = req.body;
+
+    // Check if the user already exists
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      user = new User({ googleId: firebaseUid, email, name, profilePic });
+      await user.save();
+    }
+
+    res.status(200).json({ message: "User synced to MongoDB", user });
+  } catch (error) {
+    console.error("Error syncing Firebase user:", error);
+    res.status(500).json({ message: "Failed to sync user" });
+  }
+});
+
 export default router;
