@@ -10,6 +10,8 @@ import helmet from "helmet";
 
 import userRoutes from "./routes/users.js";
 import authRoutes from "./routes/auth.js";
+import listingRoutes from "./routes/listings.js";
+import orderRoutes from "./routes/orders.js";
 
 dotenv.config();
 const app = express();
@@ -18,8 +20,13 @@ const app = express();
 app.use(express.json());
 
 const corsOptions = {
-  origin: process.env.FRONTEND_URL, // Allow requests from your frontend
-  credentials: true, // Allow cookies and headers
+  origin: [
+    "https://socialmediakenya.netlify.app", // Netlify URL
+    "http://localhost:3000", // Local development
+  ],
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE"],
+  allowedHeaders: ["Content-Type", "Authorization"],
 };
 
 app.use(cors(corsOptions));
@@ -44,6 +51,8 @@ if (process.env.NODE_ENV === "production") {
 app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/auth", authRoutes);
+app.use("/api/listings", listingRoutes);
+app.use("/api/orders", orderRoutes);
 
 mongoose
   .connect(process.env.MONGO_URI)
@@ -56,17 +65,10 @@ app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
-// Serve static files in production
-if (process.env.NODE_ENV === "production") {
-  const __dirname = path.resolve();
-  app.use(express.static(path.join(__dirname, "frontend/build")));
-
-  app.get("*", (req, res) => {
-    res.sendFile(path.resolve(__dirname, "frontend", "build", "index.html"));
-  });
-}
-
 app.use((err, req, res, next) => {
   console.error(err.stack);
-  res.status(500).json({ message: "Internal Server Error" });
+  res.status(500).json({
+    message: "Internal Server Error",
+    error: process.env.NODE_ENV === "development" ? err.message : undefined,
+  });
 });

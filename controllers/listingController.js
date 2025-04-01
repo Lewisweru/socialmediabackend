@@ -12,9 +12,19 @@ export const createListing = async (req, res) => {
 
 export const getListings = async (req, res) => {
   try {
-    const listings = await Listing.find().populate("user", "name email");
+    const { sellerId } = req.query;
+
+    if (!sellerId) {
+      return res.status(400).json({ message: "Seller ID is required" });
+    }
+
+    const listings = await Listing.find({ user: sellerId });
     res.status(200).json(listings);
   } catch (error) {
-    res.status(500).json({ message: "Error fetching listings" });
+    console.error("Error fetching listings:", error);
+    res.status(500).json({
+      message: "Error fetching listings",
+      error: error.message,
+    });
   }
 };
