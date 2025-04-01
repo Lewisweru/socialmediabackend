@@ -6,6 +6,7 @@ import bcrypt from "bcrypt";
 
 const router = express.Router();
 
+
 // 🔹 Google Authentication
 router.get("/google", passport.authenticate("google", { scope: ["profile", "email"] }));
 
@@ -29,14 +30,26 @@ router.get("/logout", (req, res, next) => {
   });
 });
 
-// 🔹 Get Current User
-router.get("/current-user", (req, res) => {
-  if (req.isAuthenticated()) {
-    return res.json(req.user);
-  }
-  res.status(401).json({ message: "Not authenticated" });
-});
 
+router.get(
+  '/current-user', 
+  passport.authenticate('jwt', { session: false }), 
+  async (req, res) => {
+    try {
+      const user = await User.findById(req.user._id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.status(200).json(user);
+    } catch (error) {
+      console.error("Error fetching current user:", error);
+      res.status(500).json({ 
+        message: "Error fetching current user", 
+        error: error.message 
+      });
+    }
+  }
+);
 // 🔥 Firebase User Sync Endpoint
 router.post("/firebase-user", async (req, res) => {
   try {

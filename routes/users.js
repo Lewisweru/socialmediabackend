@@ -1,12 +1,22 @@
 import express from "express";
-import { syncUser, getUser } from "../controllers/userController.js";
+import { 
+  getUser, 
+  syncUser, 
+  getUsers 
+} from "../controllers/userController.js";
 
 const router = express.Router();
 
-// Route to sync a user
-router.post("/sync", syncUser);
+// Get all users
+router.get("/", getUsers);
 
-// Route to get a user by ID
+// Get user by Firebase UID
+router.get("/firebase/:uid", getUser);
+
+// Get user by MongoDB ID
 router.get("/:id", getUser);
+
+// Sync user data
+router.post("/sync", syncUser);
 
 export default router;
