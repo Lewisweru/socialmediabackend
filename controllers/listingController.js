@@ -18,7 +18,7 @@ export const getListings = async (req, res) => {
       return res.status(400).json({ message: "Seller ID is required" });
     }
 
-    // Fetch listings by sellerId (string-based user field)
+    // Fetch listings by sellerId (Firebase UID stored as a string)
     const listings = await Listing.find({ user: sellerId });
 
     res.status(200).json(listings);
