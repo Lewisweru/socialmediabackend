@@ -7,7 +7,7 @@ import session from "express-session";
 import path from "path";
 import morgan from "morgan";
 import helmet from "helmet";
-
+import userRoutes from "./routes/users.js";
 import authRoutes from "./routes/auth.js";
 import listingRoutes from "./routes/listings.js";
 import orderRoutes from "./routes/orders.js";
@@ -47,7 +47,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 // Routes
-//app.use("/api/users", userRoutes);
+app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/auth", authRoutes);
 app.use("/api/listings", listingRoutes);
