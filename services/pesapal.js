@@ -5,19 +5,25 @@ export class PesapalService {
     this.consumerKey = consumerKey;
     this.consumerSecret = consumerSecret;
     this.baseUrl = isSandbox
-      ? 'https://cybqa.pesapal.com/pesapalv3'
-      : 'https://pay.pesapal.com/pesapalv3';
+      ? 'https://cybqa.pesapal.com/pesapalv3' // Sandbox URL
+      : 'https://pay.pesapal.com/v3'; // Production URL
   }
 
-  // Step 1: Get OAuth Token
+  // Step 1: Get OAuth Token (POST request)
   async getOAuthToken() {
     try {
-      const authString = `${this.consumerKey}:${this.consumerSecret}`;
-      const encodedAuth = Buffer.from(authString).toString('base64');
+      console.log('Fetching OAuth token...');
+      console.log('Base URL:', this.baseUrl);
 
-      const response = await axios.get(`${this.baseUrl}/api/Auth/RequestToken`, {
+      const payload = {
+        consumer_key: this.consumerKey,
+        consumer_secret: this.consumerSecret,
+      };
+
+      const response = await axios.post(`${this.baseUrl}/api/Auth/RequestToken`, payload, {
         headers: {
-          Authorization: `Basic ${encodedAuth}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
         },
       });
 
@@ -25,6 +31,7 @@ export class PesapalService {
         throw new Error('OAuth token not found in response');
       }
 
+      console.log('OAuth token fetched successfully:', response.data.token);
       return response.data.token;
     } catch (error) {
       console.error('Error fetching OAuth token:', error.response?.data || error.message);
@@ -32,10 +39,9 @@ export class PesapalService {
     }
   }
 
-  // Step 2: Register Payment Order
-  async registerOrder(token, orderId, amount, currency, description, callbackUrl, customer) {
+  // Step 2: Register Payment Order (POST request)
+  async registerOrder(token, orderId, amount, currency, description, callbackUrl, customer, notificationId) {
     try {
-      // Validate customer details
       if (!customer.firstName || !customer.lastName || !customer.email) {
         throw new Error('Customer details are incomplete');
       }
@@ -46,7 +52,7 @@ export class PesapalService {
         amount,
         description,
         callback_url: callbackUrl,
-        notification_id: '', // Optional: Add notification ID if you have one
+        notification_id: notificationId, // Include the IPN ID here
         billing_address: {
           email_address: customer.email,
           phone_number: '',
@@ -63,12 +69,16 @@ export class PesapalService {
         },
       };
 
+      console.log('Register Order Payload:', payload);
+
       const response = await axios.post(`${this.baseUrl}/api/Transactions/SubmitOrderRequest`, payload, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
+
+      console.log('Register Order Response:', response.data);
 
       if (!response.data.order_tracking_id) {
         throw new Error('Order tracking ID not found in response');
@@ -81,7 +91,7 @@ export class PesapalService {
     }
   }
 
-  // Step 3: Query Payment Status
+  // Step 3: Query Payment Status (GET request)
   async queryPaymentStatus(token, orderTrackingId) {
     try {
       if (!orderTrackingId) {
@@ -101,10 +111,41 @@ export class PesapalService {
         throw new Error('Payment status not found in response');
       }
 
+      console.log('Payment status fetched successfully:', response.data);
       return response.data;
     } catch (error) {
       console.error('Error querying payment status:', error.response?.data || error.message);
       throw new Error(`Failed to query payment status: ${error.response?.data?.message || error.message}`);
+    }
+  }
+
+  // Register IPN URL (POST request)
+  async registerIPN(token, ipnUrl, ipnNotificationType = 'POST') {
+    try {
+      const payload = {
+        url: ipnUrl,
+        ipn_notification_type: ipnNotificationType,
+      };
+
+      console.log('Registering IPN URL with payload:', payload);
+
+      const response = await axios.post(`${this.baseUrl}/api/URLSetup/RegisterIPN`, payload, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.data.ipn_id) {
+        throw new Error('IPN ID not found in response');
+      }
+
+      console.log('IPN URL registered successfully:', response.data);
+      return response.data;
+    } catch (error) {
+      console.error('Error registering IPN URL:', error.response?.data || error.message);
+      throw new Error(`Failed to register IPN URL: ${error.response?.data?.message || error.message}`);
     }
   }
 }

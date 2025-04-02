@@ -12,6 +12,7 @@ import authRoutes from "./routes/auth.js";
 import listingRoutes from "./routes/listings.js";
 import orderRoutes from "./routes/orders.js";
 import paymentRoutes from "./routes/payment.js";
+import pesapalRoutes from "./routes/payment.js"; // Ensure the path is correct
 
 dotenv.config();
 const app = express();
@@ -54,6 +55,7 @@ app.use("/auth", authRoutes);
 app.use("/api/listings", listingRoutes);
 app.use("/api/orders", orderRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/pesapal', pesapalRoutes); // Ensure this line is present
 
 mongoose
   .connect(process.env.MONGO_URI)
