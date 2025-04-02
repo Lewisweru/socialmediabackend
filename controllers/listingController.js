@@ -18,7 +18,9 @@ export const getListings = async (req, res) => {
       return res.status(400).json({ message: "Seller ID is required" });
     }
 
+    // Fetch listings by sellerId (string-based user field)
     const listings = await Listing.find({ user: sellerId });
+
     res.status(200).json(listings);
   } catch (error) {
     console.error("Error fetching listings:", error);

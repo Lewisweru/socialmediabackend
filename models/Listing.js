@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const ListingSchema = new mongoose.Schema(
   {
-    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    user: { type: String, ref: "User", required: true }, // Change to String
     platform: { type: String, required: true, enum: ["Instagram", "TikTok", "Facebook", "YouTube"] },
     username: { type: String, required: true },
     audienceSize: { type: Number, required: true }, // Followers for IG/TikTok, Subscribers for YouTube
