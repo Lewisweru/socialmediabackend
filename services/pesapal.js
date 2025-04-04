@@ -120,32 +120,74 @@ export class PesapalService {
   }
 
   // Register IPN URL (POST request)
-  async registerIPN(token, ipnUrl, ipnNotificationType = 'POST') {
+  async registerIPN(token, ipnUrl, ipnNotificationType = 'POST') { // Default to POST
     try {
-      const payload = {
-        url: ipnUrl,
-        ipn_notification_type: ipnNotificationType,
-      };
+        if (!ipnUrl) {
+            throw new Error('IPN URL is required for registration.');
+        }
+        const payload = {
+            url: ipnUrl,
+            ipn_notification_type: ipnNotificationType.toUpperCase(), // Ensure uppercase (GET or POST)
+        };
+        console.log(`[PesapalService] Registering IPN URL: ${ipnUrl} (${ipnNotificationType})`);
+        console.log('[PesapalService] Register IPN Payload:', payload);
 
-      console.log('Registering IPN URL with payload:', payload);
+        const response = await axios.post(`${this.baseUrl}/api/URLSetup/RegisterIPN`, payload, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+        });
 
-      const response = await axios.post(`${this.baseUrl}/api/URLSetup/RegisterIPN`, payload, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-      });
+        console.log('[PesapalService] Register IPN Response:', response.data);
 
-      if (!response.data.ipn_id) {
-        throw new Error('IPN ID not found in response');
-      }
+        // Check for success and the essential ipn_id
+        if (response?.data?.status !== "200" || !response?.data?.ipn_id) {
+             const errorDetail = response?.data?.error ? JSON.stringify(response.data.error) : JSON.stringify(response?.data);
+            throw new Error(`Failed to register IPN URL. Pesapal response: ${errorDetail}`);
+        }
 
-      console.log('IPN URL registered successfully:', response.data);
-      return response.data;
+        console.log(`[PesapalService] IPN URL registered successfully. IPN ID: ${response.data.ipn_id}`);
+        return response.data; // Contains url, created_date, ipn_id, status, etc.
+
     } catch (error) {
-      console.error('Error registering IPN URL:', error.response?.data || error.message);
-      throw new Error(`Failed to register IPN URL: ${error.response?.data?.message || error.message}`);
+        const errorMsg = error.response?.data?.message || error.response?.data || error.message;
+        console.error(`[PesapalService] Error registering IPN URL ${ipnUrl}:`, errorMsg);
+        throw new Error(`Failed to register IPN URL: ${errorMsg}`);
     }
-  }
+}
+// --- End Register IPN URL ---
+
+// --- NEW: Get Registered IPN URLs ---
+async getRegisteredIPNs(token) {
+    try {
+        console.log('[PesapalService] Fetching registered IPN list...');
+        const url = `${this.baseUrl}/api/URLSetup/GetIpnList`;
+
+        const response = await axios.get(url, {
+            headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+            },
+        });
+
+        console.log('[PesapalService] Get Registered IPNs Response:', response.data);
+
+        // Response is expected to be an array
+        if (!Array.isArray(response?.data)) {
+            const errorDetail = JSON.stringify(response?.data);
+            throw new Error(`Unexpected response format when fetching IPN list: ${errorDetail}`);
+        }
+
+        console.log(`[PesapalService] Found ${response.data.length} registered IPN URLs.`);
+        return response.data; // Returns array of { url, created_date, ipn_id, status }
+
+    } catch (error) {
+        const errorMsg = error.response?.data?.message || error.response?.data || error.message;
+        console.error('[PesapalService] Error fetching registered IPN URLs:', errorMsg);
+        throw new Error(`Failed to fetch registered IPN URLs: ${errorMsg}`);
+    }
+}
 }
