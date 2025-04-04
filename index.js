@@ -12,7 +12,6 @@ import helmet from "helmet"; // Security headers
 import userRoutes from "./routes/users.js";
 import authRoutes from "./routes/auth.js";
 import orderRoutes from "./routes/orders.js";
-import paymentRoutes from "./routes/payment.js"; // Routes defined in payment.js
 
 // Load Environment Variables
 dotenv.config();
@@ -85,7 +84,6 @@ app.use("/api/users", userRoutes); // User related endpoints
 app.use("/api/auth", authRoutes); // API endpoints for auth (login, signup, firebase-sync etc.)
 app.use("/auth", authRoutes); // Non-prefixed auth routes, likely for OAuth callbacks (e.g., /auth/google/callback)
 app.use("/api/orders", orderRoutes); // Order creation, stats, IPN handler
-app.use('/api/payment', paymentRoutes); // Payment related endpoints (from payment.js)
 app.use('/api/orders', orderRoutes);
 // Removed: app.use('/api/pesapal', pesapalRoutes); // This was a duplicate mount of paymentRoutes
 
