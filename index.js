@@ -12,6 +12,7 @@ import helmet from "helmet"; // Security headers
 import userRoutes from "./routes/users.js";
 import authRoutes from "./routes/auth.js";
 import orderRoutes from "./routes/orders.js";
+import publicOrderRoutes from './routes/publicOrderRoutes.js'
 
 // Load Environment Variables
 dotenv.config();
@@ -27,6 +28,8 @@ const app = express();
 
 // Security Headers
 app.use(helmet());
+
+app.use('/api/orders', publicOrderRoutes); // Mount public IPN handler first
 
 // CORS Configuration
 const allowedOrigins = [

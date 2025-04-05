@@ -6,7 +6,6 @@ import express from 'express';
 import {
   initiateOrderAndPayment, // For starting the payment process
   getOrderStatusByReference,
-  handleIpn,             // For handling Pesapal notifications
   getOrderStats,         // For the dashboard stats
   getUserOrders,         // For listing user's orders (Added example)
   getOrderDetails        // For getting a single order's details (Added example)
@@ -26,10 +25,7 @@ const router = express.Router();
 // Access: Private (User must be logged in)
 router.post('/initiate', protect, initiateOrderAndPayment);
 
-// POST   /api/orders/ipn
-// Desc:  Endpoint for Pesapal to send Instant Payment Notifications
-// Access: Public (Pesapal needs to reach this without user login)
-router.post('/ipn', handleIpn);
+
 
 // GET    /api/orders/stats
 // Desc:  Get dashboard statistics (counts) for the logged-in user
