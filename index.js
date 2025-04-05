@@ -29,6 +29,11 @@ const app = express();
 // Security Headers
 app.use(helmet());
 
+// Body Parsers
+app.use(express.json()); // Parse JSON bodies
+app.use(express.urlencoded({ extended: false })); // Parse URL-encoded bodies
+
+
 app.use('/api/orders', publicOrderRoutes); // Mount public IPN handler first
 
 // CORS Configuration
@@ -54,9 +59,6 @@ app.use(cors(corsOptions));
 // Handle preflight requests for all routes
 app.options('*', cors(corsOptions));
 
-// Body Parsers
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: false })); // Parse URL-encoded bodies
 
 // HTTP Request Logging
 if (process.env.NODE_ENV === "production") {
