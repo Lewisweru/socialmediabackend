@@ -1,4 +1,4 @@
-// models/User.js (or .ts)
+// models/User.js
 import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
@@ -37,10 +37,15 @@ const userSchema = new mongoose.Schema(
     },
     password: { // For users signing up with email/password
         type: String
-        // Select: false might be useful if you don't want to send hash by default
+        // select: false // Consider adding if you NEVER want password included by default
     },
-    // Add any other fields you might need, e.g., roles, preferences etc.
-
+    // --- NEW ROLE FIELD ---
+    role: {
+        type: String,
+        enum: ['user', 'admin'], // Define possible roles
+        default: 'user'        // Default new users to 'user'
+    },
+    // --- END NEW ROLE FIELD ---
   },
   { timestamps: true } // Adds createdAt and updatedAt automatically
 );
