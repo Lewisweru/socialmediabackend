@@ -1,111 +1,129 @@
+// server.js / index.js
+
+import dotenv from "dotenv"; // Import dotenv FIRST
+dotenv.config(); // <-- LOAD ENV VARS IMMEDIATELY!
+
+// --- NOW import everything else ---
 import express from "express";
-import dotenv from "dotenv";
 import mongoose from "mongoose";
 import cors from "cors";
-import passport from "passport"; // Assuming passport setup is in config/googleAuth.js or similar
+import passport from "passport";
 import session from "express-session";
-// import path from "path"; // Not used in this snippet, remove if unnecessary elsewhere
-import morgan from "morgan"; // HTTP request logger
-import helmet from "helmet"; // Security headers
+import morgan from "morgan";
+import helmet from "helmet";
+import connectDB from "./config/db.js"; // Adjust path
+import { startSupplierStatusChecker } from './scheduler/supplierStatusCheck.js'; // Adjust path
+import userRoutes from "./routes/users.js";   // Adjust path
+import authRoutes from "./routes/auth.js";     // Adjust path
+import orderRoutes from "./routes/orders.js"; // Adjust path (Protected Routes)
+import publicOrderRoutes from './routes/publicOrderRoutes.js'; // Adjust path (Public Routes like IPN)
 
-// Import Route Files (adjust paths if needed)
-import userRoutes from "./routes/users.js";
-import authRoutes from "./routes/auth.js";
-import orderRoutes from "./routes/orders.js";
-import publicOrderRoutes from './routes/publicOrderRoutes.js'
+// --- Optional Test Log (Can stay here or move after imports) ---
+console.log('------------------------------------');
+console.log('[Server Start] Environment Variables Check Post-dotenv...');
+// ... (rest of your console.log checks for variables) ...
+console.log('[Server Start] JESKIEINC_API_KEY loaded:', process.env.JESKIEINC_API_KEY ? 'Yes' : 'NO!'); // Check AGAIN here if needed
+console.log('------------------------------------');
+// --- End Test Log ---
 
-// Load Environment Variables
-dotenv.config();
 
-// Database Connection (Ensure connectDB is defined and exported correctly)
-import connectDB from "./config/db.js"; // Assuming db connection logic is here
+// --- Database Connection ---
+// This now correctly runs *after* dotenv has loaded MONGO_URI
 connectDB();
 
-// Initialize Express App
+// --- Initialize Express App ---
 const app = express();
 
 // --- Core Middleware ---
+app.use(helmet()); // Security headers first
 
-// Security Headers
-app.use(helmet());
+// --- Body Parsers (BEFORE routes needing req.body) ---
+app.use(express.json()); // For parsing application/json
+app.use(express.urlencoded({ extended: true })); // For parsing application/x-www-form-urlencoded
 
-// Body Parsers
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: false })); // Parse URL-encoded bodies
-
-
-app.use('/api/orders', publicOrderRoutes); // Mount public IPN handler first
-
-// CORS Configuration
-const allowedOrigins = [
-  "https://socialmediakenya.netlify.app", // Netlify URL (Production Frontend)
-  "http://localhost:5173", // Local Frontend Development
-  // Add any other origins if necessary
-];
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests) or from allowed list
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true, // Allow cookies/auth headers
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Allow common methods
-  allowedHeaders: ["Content-Type", "Authorization"], // Allow necessary headers
-};
-app.use(cors(corsOptions));
-// Handle preflight requests for all routes
-app.options('*', cors(corsOptions));
-
-
-// HTTP Request Logging
+// --- HTTP Request Logging ---
 if (process.env.NODE_ENV === "production") {
-  app.use(morgan("combined")); // More detailed logging for production
+  app.use(morgan("combined"));
 } else {
-  app.use(morgan("dev")); // Concise logging for development
+  app.use(morgan("dev"));
 }
 
-// Session Middleware (Required for Passport Session Auth, configure secret properly)
-// IMPORTANT: Use a strong, secret key stored in environment variables for production!
+// --- PUBLIC API Routes (Mounted BEFORE CORS) ---
+console.log("Registering PUBLIC routes...");
+app.use('/api/orders', publicOrderRoutes); // Mount public IPN handler (/api/orders/ipn)
+console.log("Public routes registered.");
+
+// --- STRICT CORS Configuration for subsequent API routes ---
+const allowedOrigins = [
+  process.env.FRONTEND_URL, // Use env variable for frontend URL
+  "http://localhost:5173",  // Keep for local dev if needed
+].filter(Boolean); // Filter out undefined/null values
+
+console.log("Allowed CORS Origins:", allowedOrigins);
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`CORS blocked for origin: ${origin}`);
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+};
+app.use(cors(corsOptions)); // Apply CORS middleware
+app.options('*', cors(corsOptions)); // Handle preflight OPTIONS requests
+
+
+// --- Session & Passport Middleware ---
+if (!process.env.SESSION_SECRET) {
+    console.warn("WARNING: SESSION_SECRET environment variable not set. Using insecure default.");
+}
 app.use(
   session({
-    secret: process.env.SESSION_SECRET || "fallback-very-secret-key", // CHANGE THIS and use ENV var
-    resave: false, // Don't save session if unmodified
-    saveUninitialized: false, // Don't create session until something stored
-    // Configure cookie settings for production (secure, httpOnly, sameSite)
-    // cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, sameSite: 'lax' }
+    secret: process.env.SESSION_SECRET || "fallback-insecure-secret-key-please-change", // Use ENV Var!
+    resave: false, // Explicitly set
+    saveUninitialized: false, // Explicitly set
+    // cookie: { /* Production settings */ }
+    // store: MongoStore.create({ mongoUrl: process.env.MONGO_URI }) // Optional store
   })
 );
-
-// Passport Middleware (Initialize after Session)
 app.use(passport.initialize());
-app.use(passport.session()); // Enable persistent login sessions
+app.use(passport.session()); // If using Passport sessions
 
-// --- API Routes ---
-console.log("Registering API routes...");
-app.use("/api/users", userRoutes); // User related endpoints
-app.use("/api/auth", authRoutes); // API endpoints for auth (login, signup, firebase-sync etc.)
-app.use("/auth", authRoutes); // Non-prefixed auth routes, likely for OAuth callbacks (e.g., /auth/google/callback)
-app.use("/api/orders", orderRoutes); // Order creation, stats, IPN handler
-app.use('/api/orders', orderRoutes);
-// Removed: app.use('/api/pesapal', pesapalRoutes); // This was a duplicate mount of paymentRoutes
 
+// --- PROTECTED/CORE API Routes (Mounted AFTER CORS/Auth middleware setup) ---
+console.log("Registering protected API routes...");
+app.use("/api/users", userRoutes);
+app.use("/api/auth", authRoutes);
+app.use("/auth", authRoutes); // For potential OAuth callbacks defined in authRoutes
+app.use("/api/orders", orderRoutes); // Mount PROTECTED order routes (initiate, stats, admin, etc.)
 console.log("API routes registered.");
 
-// --- Basic Root Route (Optional) ---
+
+// --- Basic Root Route (Optional Health Check) ---
 app.get('/', (req, res) => {
-    res.send('API is running...');
+    res.status(200).send('API is running and healthy!');
 });
 
-// --- Error Handling Middleware (Place AFTER routes) ---
-app.use((err, req, res, next) => {
-  console.error("Unhandled Error:", err.stack || err); // Log the full error stack
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode; // Use existing status code if set, else 500
+
+// --- Not Found Handler (Catch 404s - Place After All Valid Routes) ---
+app.use((req, res, next) => {
+    res.status(404).json({ message: `Not Found - ${req.method} ${req.originalUrl}` });
+});
+
+
+// --- Global Error Handling Middleware (Place LAST) ---
+// Catches errors passed by next(err) or thrown in async handlers
+app.use((err, req, res, next) => { // Must have 4 arguments
+  console.error("Unhandled Error:", err.stack || err);
+  const statusCode = err.status || err.statusCode || res.statusCode < 400 ? 500 : res.statusCode; // Use error status or default to 500
   res.status(statusCode).json({
     message: err.message || "Internal Server Error",
-    // Provide stack trace only in development for security
+    // Only provide stack trace in development
     stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
   });
 });
@@ -115,4 +133,11 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`✅ Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+
+  // --- Start Scheduled Jobs ---
+  if (process.env.NODE_ENV !== 'test') { // Avoid running jobs during tests
+      console.log("Starting scheduled jobs...");
+      startSupplierStatusChecker(); // Start the supplier check job
+      // cleanupPendingOrdersTask.start(); // Start cleanup job if implemented
+  }
 });
