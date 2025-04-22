@@ -1,118 +1,96 @@
-import express from "express";
-import dotenv from "dotenv";
-import mongoose from "mongoose";
-import cors from "cors";
-import passport from "passport"; // Assuming passport setup is in config/googleAuth.js or similar
-import session from "express-session";
-// import path from "path"; // Not used in this snippet, remove if unnecessary elsewhere
-import morgan from "morgan"; // HTTP request logger
-import helmet from "helmet"; // Security headers
+// index.js (ESM)
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+// Use .js extension for local file imports in ESM
+import connectDB from './config/db.js';
+import config from './config.js'; // Assumes compiled config.js or renamed .ts
+import { info, error } from './utils/logger.js'; // Import logger functions
+import { loadJeskieServices } from './services/jeskieService.js';
 
-// Import Route Files (adjust paths if needed)
-import userRoutes from "./routes/users.js";
-import authRoutes from "./routes/auth.js";
-import orderRoutes from "./routes/orders.js";
-import publicOrderRoutes from './routes/publicOrderRoutes.js'
+// Import Middleware (adjust path and name as needed)
+import authMiddleware from './middleware/authMiddleware.js';
+// You might not need firebaseAdmin middleware directly here if authMiddleware handles it
+// import { firebaseAdminAuth } from './middleware/firebaseAdminAuth.js'; // If separate
 
-// Load Environment Variables
-dotenv.config();
+// Import Routes (use .js extension)
+import authRoutes from './routes/auth.js';
+import orderRoutes from './routes/orders.js';
+import pesapalRoutes from './routes/pesapal.js'; // Assuming path/name
+import userRoutes from './routes/users.js';
+// import engagementRoutes from './routes/engagement.js'; // If you have these
+// import transactionRoutes from './routes/transactions.js';
+// import publicOrderRoutes from './routes/publicOrderRoutes.js';
 
-// Database Connection (Ensure connectDB is defined and exported correctly)
-import connectDB from "./config/db.js"; // Assuming db connection logic is here
-connectDB();
+dotenv.config(); // Load .env variables
 
-// Initialize Express App
 const app = express();
 
-// --- Core Middleware ---
+// --- Database Connection and Service Loading ---
+const startServer = async () => {
+    try {
+        await connectDB();
+        info('MongoDB Connected successfully.');
 
-// Security Headers
-app.use(helmet());
+        await loadJeskieServices(); // Load services after DB connection
+        info('Jeskie services loading attempted (check logs).');
 
-// Body Parsers
-app.use(express.json()); // Parse JSON bodies
-app.use(express.urlencoded({ extended: false })); // Parse URL-encoded bodies
+        // --- Start Express Server ---
+        const PORT = config.server.port || 3000;
+        app.listen(PORT, () => {
+            info(`Server running in ${config.server.nodeEnv} mode on port ${PORT}`);
+            info(`Accepting requests from: ${config.server.frontendUrl}`);
+        });
 
-
-app.use('/api/orders', publicOrderRoutes); // Mount public IPN handler first
-
-// CORS Configuration
-const allowedOrigins = [
-  "https://socialmediakenya.netlify.app", // Netlify URL (Production Frontend)
-  "http://localhost:5173", // Local Frontend Development
-  // Add any other origins if necessary
-];
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests) or from allowed list
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    } catch (err) {
+        error('FATAL: Server startup failed.', err);
+        process.exit(1);
     }
-  },
-  credentials: true, // Allow cookies/auth headers
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"], // Allow common methods
-  allowedHeaders: ["Content-Type", "Authorization"], // Allow necessary headers
 };
-app.use(cors(corsOptions));
-// Handle preflight requests for all routes
-app.options('*', cors(corsOptions));
 
+// --- Middleware Setup ---
+app.use(cors({
+    origin: config.server.frontendUrl,
+    credentials: true,
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// HTTP Request Logging
-if (process.env.NODE_ENV === "production") {
-  app.use(morgan("combined")); // More detailed logging for production
-} else {
-  app.use(morgan("dev")); // Concise logging for development
-}
+// Optional: HTTP Request Logging (using morgan if installed, or custom logger)
+// import morgan from 'morgan'; // If you decide to install and use morgan
+// app.use(morgan('dev')); // Or 'combined'
 
-// Session Middleware (Required for Passport Session Auth, configure secret properly)
-// IMPORTANT: Use a strong, secret key stored in environment variables for production!
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "fallback-very-secret-key", // CHANGE THIS and use ENV var
-    resave: false, // Don't save session if unmodified
-    saveUninitialized: false, // Don't create session until something stored
-    // Configure cookie settings for production (secure, httpOnly, sameSite)
-    // cookie: { secure: process.env.NODE_ENV === 'production', httpOnly: true, sameSite: 'lax' }
-  })
-);
+app.use((req, res, next) => { // Basic request logging with our logger
+    info(`REQ: ${req.method} ${req.originalUrl}`);
+    next();
+});
 
-// Passport Middleware (Initialize after Session)
-app.use(passport.initialize());
-app.use(passport.session()); // Enable persistent login sessions
 
 // --- API Routes ---
-console.log("Registering API routes...");
-app.use("/api/users", userRoutes); // User related endpoints
-app.use("/api/auth", authRoutes); // API endpoints for auth (login, signup, firebase-sync etc.)
-app.use("/auth", authRoutes); // Non-prefixed auth routes, likely for OAuth callbacks (e.g., /auth/google/callback)
-app.use("/api/orders", orderRoutes); // Order creation, stats, IPN handler
-app.use('/api/orders', orderRoutes);
-// Removed: app.use('/api/pesapal', pesapalRoutes); // This was a duplicate mount of paymentRoutes
+// Note: Apply auth middleware within the route file (like in orders.js)
+// or here if ALL routes under a path need it. orders.js already applies it.
+app.use('/api/auth', authRoutes);
+app.use('/api/orders', orderRoutes); // Already protected by middleware in orders.js
+app.use('/api/pesapal', pesapalRoutes);
+app.use('/api/users', userRoutes); // Apply authMiddleware if needed: app.use('/api/users', authMiddleware, userRoutes);
+// Mount other routes...
+// app.use('/api/engagements', engagementRoutes);
+// app.use('/api/transactions', transactionRoutes);
+// app.use('/api/public/orders', publicOrderRoutes); // Example
 
-console.log("API routes registered.");
 
-// --- Basic Root Route (Optional) ---
-app.get('/', (req, res) => {
-    res.send('API is running...');
-});
+// --- Simple Root Route ---
+app.get('/', (req, res) => res.send('API is alive!'));
 
-// --- Error Handling Middleware (Place AFTER routes) ---
+// --- Global Error Handler (Basic) ---
+// Place this AFTER all routes
 app.use((err, req, res, next) => {
-  console.error("Unhandled Error:", err.stack || err); // Log the full error stack
-  const statusCode = res.statusCode === 200 ? 500 : res.statusCode; // Use existing status code if set, else 500
-  res.status(statusCode).json({
-    message: err.message || "Internal Server Error",
-    // Provide stack trace only in development for security
-    stack: process.env.NODE_ENV === "development" ? err.stack : undefined,
-  });
+    error('Unhandled Error:', err.stack || err); // Log stack trace
+    res.status(err.status || 500).json({
+        message: err.message || 'Internal Server Error',
+        // error: config.server.nodeEnv === 'development' ? err : {} // Only expose error details in dev
+    });
 });
 
-
-// --- Start Server ---
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`✅ Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-});
+// --- Start the Server ---
+startServer();

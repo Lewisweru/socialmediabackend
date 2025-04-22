@@ -1,34 +1,24 @@
-// routes/orders.js
+// routes/orders.js (ESM)
 import express from 'express';
+// Import controller functions explicitly
 import {
-  initiateOrderAndPayment,
-  // handleIpn, // This should be in publicOrderRoutes now
-  getOrderStats,
-  getUserOrders,
-  getOrderDetails,
-  getOrderStatusByReference, // Keep this here (can be public or private)
-  // --- Import Admin Controllers ---
-  getAllOrdersAdmin,
-  updateOrderStatusAdmin
-} from '../controllers/orderController.js'; // Adjust path
-import { protect } from '../middleware/authMiddleware.js'; // Adjust path
-import { isAdmin } from '../middleware/adminMiddleware.js'; // <-- Import admin middleware
+    initiateOrder,
+    checkOrderStatusByReference,
+    getUserOrders
+} from '../controllers/orderController.js'; // Use .js extension
+// Import your actual authentication middleware
+import authMiddleware from '../middleware/authMiddleware.js'; // Use .js extension
 
 const router = express.Router();
 
-// --- User Routes (Protected) ---
-router.post('/initiate', protect, initiateOrderAndPayment);
-router.get('/stats', protect, getOrderStats);
-router.get('/', protect, getUserOrders); // Route for listing user's own orders
-router.get('/:id', protect, getOrderDetails); // Route for user getting own specific order
+// POST /api/orders/initiate - Initiate a new order (requires auth)
+router.post('/initiate', authMiddleware, initiateOrder);
 
-// --- Status Check Route (Can be public or protected) ---
-// Decide if user needs to be logged in to check status via callback link
-router.get('/status-by-ref/:merchantRef', getOrderStatusByReference); // Currently public
+// GET /api/orders/status/:merchantReference - Check status via callback (requires auth)
+router.get('/status/:merchantReference', authMiddleware, checkOrderStatusByReference);
 
-// --- Admin Routes (Protected + Admin Check) ---
-// Prefix routes with /admin to avoid conflicts (e.g., GET /api/orders/ vs GET /api/orders/admin/all)
-router.get('/admin/all', protect, isAdmin, getAllOrdersAdmin);
-router.put('/admin/:id/status', protect, isAdmin, updateOrderStatusAdmin);
+// GET /api/orders/my-orders - Fetch logged-in user's orders (requires auth)
+router.get('/my-orders', authMiddleware, getUserOrders);
 
+// Use export default for the router
 export default router;
