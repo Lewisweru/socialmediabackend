@@ -4,7 +4,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 // Use .js extension for local file imports in ESM
 import connectDB from './config/db.js';
-import config from './config.js'; // Assumes compiled config.js or renamed .ts
+import config from './config.ts'; // Assumes compiled config.js or renamed .ts
 import { info, error } from './utils/logger.js'; // Import logger functions
 import { loadJeskieServices } from './services/jeskieService.js';
 
