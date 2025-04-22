@@ -1,28 +1,19 @@
-// index.js (ESM)
+// index.js (Corrected - Imports Routers Correctly)
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-// Use .js extension for local file imports in ESM
 import connectDB from './config/db.js';
-import config from './config.js'; // Assumes compiled config.js or renamed .ts
-import { info, error } from './utils/logger.js'; // Import logger functions
+import config from './config.js'; // Assumes config.js exists and uses ESM export
+import { info, error } from './utils/logger.js';
 import { loadJeskieServices } from './services/jeskieService.js';
 
-// Import Middleware (adjust path and name as needed)
-import authMiddleware from './middleware/authMiddleware.js';
-// You might not need firebaseAdmin middleware directly here if authMiddleware handles it
-// import { firebaseAdminAuth } from './middleware/firebaseAdminAuth.js'; // If separate
-
-// Import Routes (use .js extension)
+// Import Routers from their respective files in the 'routes' directory
 import authRoutes from './routes/auth.js';
 import orderRoutes from './routes/orders.js';
-import pesapalRoutes from './routes/pesapal.js'; // Assuming path/name
+import pesapalRoutes from './routes/pesapal.js'; // Imports the default export (router)
 import userRoutes from './routes/users.js';
-// import engagementRoutes from './routes/engagement.js'; // If you have these
-// import transactionRoutes from './routes/transactions.js';
-// import publicOrderRoutes from './routes/publicOrderRoutes.js';
 
-dotenv.config(); // Load .env variables
+dotenv.config();
 
 const app = express();
 
@@ -31,17 +22,13 @@ const startServer = async () => {
     try {
         await connectDB();
         info('MongoDB Connected successfully.');
-
         await loadJeskieServices(); // Load services after DB connection
-        info('Jeskie services loading attempted (check logs).');
-
-        // --- Start Express Server ---
+        info('Jeskie services loading attempted.'); // Check logs for success/failure
         const PORT = config.server.port || 3000;
         app.listen(PORT, () => {
             info(`Server running in ${config.server.nodeEnv} mode on port ${PORT}`);
             info(`Accepting requests from: ${config.server.frontendUrl}`);
         });
-
     } catch (err) {
         error('FATAL: Server startup failed.', err);
         process.exit(1);
@@ -50,45 +37,39 @@ const startServer = async () => {
 
 // --- Middleware Setup ---
 app.use(cors({
-    origin: config.server.frontendUrl,
-    credentials: true,
+    origin: config.server.frontendUrl, // Restrict to frontend URL
+    credentials: true, // Allow cookies/auth headers if needed
 }));
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json()); // Parse JSON request bodies
+app.use(express.urlencoded({ extended: true })); // Parse URL-encoded bodies
 
-// Optional: HTTP Request Logging (using morgan if installed, or custom logger)
-// import morgan from 'morgan'; // If you decide to install and use morgan
-// app.use(morgan('dev')); // Or 'combined'
-
-app.use((req, res, next) => { // Basic request logging with our logger
-    info(`REQ: ${req.method} ${req.originalUrl}`);
+// --- Basic Request Logger ---
+app.use((req, res, next) => {
+    info(`REQ: ${req.method} ${req.originalUrl}`); // Log incoming requests
     next();
 });
 
-
 // --- API Routes ---
-// Note: Apply auth middleware within the route file (like in orders.js)
-// or here if ALL routes under a path need it. orders.js already applies it.
+// Mount the imported routers to their base paths
+// Middleware (like authentication) should be applied WITHIN the route files where needed
 app.use('/api/auth', authRoutes);
-app.use('/api/orders', orderRoutes); // Already protected by middleware in orders.js
-app.use('/api/pesapal', pesapalRoutes);
-app.use('/api/users', userRoutes); // Apply authMiddleware if needed: app.use('/api/users', authMiddleware, userRoutes);
-// Mount other routes...
-// app.use('/api/engagements', engagementRoutes);
-// app.use('/api/transactions', transactionRoutes);
-// app.use('/api/public/orders', publicOrderRoutes); // Example
-
+app.use('/api/orders', orderRoutes);      // Handles /api/orders/... routes
+app.use('/api/pesapal', pesapalRoutes);  // Handles /api/pesapal/ipn, etc.
+app.use('/api/users', userRoutes);        // Handles /api/users/... routes
+// Add other base routes like '/api/engagements', '/api/transactions' if you have them
 
 // --- Simple Root Route ---
-app.get('/', (req, res) => res.send('API is alive!'));
+app.get('/', (req, res) => {
+    res.send('API is alive and running!');
+});
 
-// --- Global Error Handler (Basic) ---
-// Place this AFTER all routes
+// --- Global Error Handler (Place AFTER all specific routes) ---
 app.use((err, req, res, next) => {
-    error('Unhandled Error:', err.stack || err); // Log stack trace
+    error('Unhandled Error:', err.stack || err); // Log the full error stack
     res.status(err.status || 500).json({
-        message: err.message || 'Internal Server Error',
-        // error: config.server.nodeEnv === 'development' ? err : {} // Only expose error details in dev
+        message: err.message || 'An unexpected server error occurred.',
+        // Avoid sending detailed error stack in production environment
+        // stack: config.server.nodeEnv === 'development' ? err.stack : undefined,
     });
 });
 

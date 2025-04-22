@@ -1,7 +1,7 @@
-// utils/pricing.js
-const logger = require('./logger.js'); // Use the logger
+// utils/pricing.js (Corrected ESM Export)
+import { info, warn, error, debug } from './logger.js';
 
-// --- Pricing Data --- (Same as before, ensure consistency)
+// --- Pricing Data ---
 const PRICING = {
     tiktok: { standard: { followers: 0.5, likes: 0.05, views: 0.004 }, high: { followers: 0.55, likes: 0.07, views: 0.06 } },
     instagram: { standard: { followers: 0.5, likes: 0.06, views: 0.05 }, high: { followers: 0.55, likes: 0.08, views: 0.07 } },
@@ -12,21 +12,20 @@ const PRICING = {
     x: { standard: { followers: 0.8, likes: 0.7, retweets: 0.6, comments: 0.5 }, high: { followers: 1.0, likes: 0.9, retweets: 0.8, comments: 0.7 } },
 };
 
-// Helper function (same as before)
 const normalizeServiceName = (name) => {
     if (!name) return '';
     return name.toLowerCase().replace(/\s+/g, '');
 };
 
-function calculatePrice(
+// Use 'export function' for a named export
+export function calculatePrice(
     platform,
     service,
     quality,
     quantity
 ) {
-    // --- Same validation and calculation logic as before ---
-     if (!platform || !service || !quality || typeof quantity !== 'number' || quantity <= 0) {
-        logger.warn(`Invalid input for calculatePrice: p=${platform}, s=${service}, q=${quality}, qty=${quantity}`);
+    if (!platform || !service || !quality || typeof quantity !== 'number' || quantity <= 0) {
+        warn(`Invalid input for calculatePrice: p=${platform}, s=${service}, q=${quality}, qty=${quantity}`);
         return 0;
     }
     const platformKey = platform.toLowerCase();
@@ -35,24 +34,22 @@ function calculatePrice(
 
     const platformPrices = PRICING[platformKey];
     if (!platformPrices) {
-        logger.error(`Pricing not found for platform: ${platformKey}`);
+        error(`Pricing not found for platform: ${platformKey}`);
         return 0;
     }
     const qualityPrices = platformPrices[qualityKey];
-     if (!qualityPrices) {
-        logger.error(`Pricing not found for quality: ${qualityKey} under platform: ${platformKey}`);
+    if (!qualityPrices) {
+        error(`Pricing not found for quality: ${qualityKey} under platform: ${platformKey}`);
         return 0;
     }
     const basePrice = qualityPrices[serviceKey];
     if (typeof basePrice !== 'number') {
-        logger.error(`Pricing rate not found for service key: '${serviceKey}' under ${platformKey}/${qualityKey} (Original Service: '${service}')`);
-        logger.debug(`Available service keys for ${platformKey}/${qualityKey}: ${Object.keys(qualityPrices).join(', ')}`);
+        error(`Pricing rate not found for service key: '${serviceKey}' under ${platformKey}/${qualityKey} (Original Service: '${service}')`);
+        debug(`Available service keys for ${platformKey}/${qualityKey}: ${Object.keys(qualityPrices).join(', ')}`);
         return 0;
     }
     const totalPrice = quantity * basePrice;
     const roundedPrice = Math.round(totalPrice * 100) / 100;
-    logger.info(`Calculated price for ${quantity} x ${platform}/${service}/${quality} = ${roundedPrice}`);
+    info(`Calculated price for ${quantity} x ${platform}/${service}/${quality} = ${roundedPrice}`);
     return roundedPrice;
 }
-
-module.exports = { calculatePrice }; // Export using CommonJS

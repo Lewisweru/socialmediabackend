@@ -2,8 +2,6 @@
 import dotenv from 'dotenv'; // Use import with "type": "module"
 dotenv.config();
 
-// REMOVED interface definitions - they are invalid in JS files
-
 const config = {
   cryptomus: {
     merchantId: process.env.CRYPTOMUS_MERCHANT_ID || '',
@@ -30,8 +28,7 @@ const config = {
   database: {
     mongoUri: process.env.MONGODB_URI || '',
   },
-  // REMOVED <PesapalConfig> type assertion
-  pesapal: {
+  pesapal: { // Added Pesapal
     consumerKey: process.env.PESAPAL_CONSUMER_KEY || '',
     consumerSecret: process.env.PESAPAL_CONSUMER_SECRET || '',
     baseURL: process.env.PESAPAL_API_URL || 'https://cybqa.pesapal.com/pesapalv3',
@@ -42,27 +39,17 @@ const config = {
     authTokenURL: '/api/v3/Auth/RequestToken',
     callbackUrlBase: process.env.FRONTEND_URL || 'http://localhost:5173',
   },
-  // REMOVED <JeskieConfig> type assertion
-  jeskie: {
+  jeskie: { // Added Jeskie
     apiUrl: process.env.JESKIE_API_URL || 'https://jeskieinc.com/api/v2',
     apiKey: process.env.JESKIE_API_KEY || '',
   },
 };
 
-// --- Add Basic Validation ---
-if (!config.database.mongoUri) {
-  console.error('FATAL ERROR: MONGODB_URI is not defined in environment variables.');
-  // process.exit(1); // Consider uncommenting if DB is essential
-}
-if (!config.jwt.secret || config.jwt.secret === 'your-very-secret-key-please-change') {
-  console.warn('WARNING: JWT_SECRET is using a default or weak value. Set a strong secret in .env for production.');
-}
-if (!config.pesapal.consumerKey || !config.pesapal.consumerSecret) {
-    console.warn('WARNING: Pesapal Consumer Key or Secret is missing in .env.');
-}
-if (!config.jeskie.apiKey) {
-    console.warn('WARNING: JESKIE_API_KEY is missing in .env. Jeskie order automation will fail.');
-}
+// --- Validation Checks ---
+if (!config.database.mongoUri) console.error('FATAL: MONGODB_URI not set.');
+if (!config.jwt.secret || config.jwt.secret === 'your-very-secret-key-please-change') console.warn('WARNING: Weak JWT_SECRET.');
+if (!config.pesapal.consumerKey || !config.pesapal.consumerSecret) console.warn('WARNING: Pesapal keys missing.');
+if (!config.jeskie.apiKey) console.warn('WARNING: JESKIE_API_KEY missing.');
 
 // Use export default for ESM
 export default config;
