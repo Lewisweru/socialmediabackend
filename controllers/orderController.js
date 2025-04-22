@@ -2,7 +2,7 @@ import Order from '../models/Order.js'; // Adjust path
 // Import OrderStatusEnum if needed for validation, otherwise remove if unused
 // import { OrderStatusEnum } from '../models/Order.js';
 import User from '../models/User.js';   // Adjust path
-import { PesapalService } from '../services/pesapal.js'; // Adjust path
+import { PesapalService } from '../routes/pesapal.js'; // Adjust path
 import { v4 as uuidv4 } from 'uuid';
 import mongoose from 'mongoose';
 import { info, warn, error, debug } from '../utils/logger.js';
