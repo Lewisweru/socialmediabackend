@@ -1,59 +1,61 @@
-// models/User.js
+// models/User.js (Corrected for Option 1)
 import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema(
   {
-    _id: { // Firebase UID used as _id
-      type: String,
-      required: true
-    },
-    username: { // Added username field
+    // REMOVED custom _id definition. Mongoose will add default ObjectId _id.
+
+    firebaseUid: { // ADDED dedicated field for Firebase UID
       type: String,
       required: true,
-      unique: true, // Ensure usernames are unique
-      trim: true,   // Remove leading/trailing whitespace
-      index: true   // Add index for faster lookups
+      unique: true, // Ensures only one document per Firebase user
+      index: true   // Index for fast lookups in 'protect' middleware
     },
-    email: {
+    username: { // Kept from your schema
       type: String,
       required: true,
       unique: true,
       trim: true,
-      lowercase: true, // Store emails consistently
-      match: /.+\@.+\..+/, // Basic email format validation
       index: true
     },
-    country: { // Added country field
+    email: { // Kept from your schema
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      lowercase: true,
+      match: /.+\@.+\..+/, // Basic email validation
+      index: true
+    },
+    country: { // Kept from your schema
         type: String,
         required: true,
         trim: true
     },
-    name: { // Keep name field - maybe for full name display later?
+    name: { // Kept from your schema
         type: String,
         trim: true
     },
-    profilePic: {
+    profilePic: { // Kept from your schema
         type: String
     },
-    password: { // For users signing up with email/password
+    password: { // Kept from your schema - for non-Firebase auth methods
         type: String
-        // select: false // Consider adding if you NEVER want password included by default
+        // select: false // Optional: uncomment if you usually want to hide it
     },
-    // --- NEW ROLE FIELD ---
-    role: {
+    role: { // Kept from your schema
         type: String,
-        enum: ['user', 'admin'], // Define possible roles
-        default: 'user'        // Default new users to 'user'
+        enum: ['user', 'admin'],
+        default: 'user'
     },
-    // --- END NEW ROLE FIELD ---
   },
-  { timestamps: true } // Adds createdAt and updatedAt automatically
+  { timestamps: true } // Keep timestamps
 );
 
-// Optional: Pre-save hook if you want to automatically populate 'name' from 'username' if 'name' is empty
+// Optional pre-save hook (remains the same)
 userSchema.pre('save', function(next) {
   if (!this.name && this.username) {
-    this.name = this.username; // Default name to username if not provided
+    this.name = this.username;
   }
   next();
 });
