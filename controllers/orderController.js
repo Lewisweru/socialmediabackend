@@ -1,4 +1,4 @@
-// controllers/orderController.js (Complete - Updated for ExoSupplier)
+// controllers/orderController.js (FULL CODE - Fixed userId CastError)
 
 import Order from '../models/Order.js';
 import User from '../models/User.js';
@@ -51,27 +51,31 @@ async function placeSupplierOrderAndUpdateStatus(order) {
 
     info(`[Supplier Order] Attempting placement for Order ${order._id} via ExoSupplier...`);
     try {
-        // 1. Get ExoSupplier Service Details (ID, min, max, etc.)
-        const serviceDetails = getExoSupplierServiceDetails(order.platform, order.service);
+        // 1. Get ExoSupplier Service Details (ID, min, max, etc.) based on BASE service name + quality
+        const serviceDetails = getExoSupplierServiceDetails(
+            order.platform,
+            order.service,
+            order.quality // Pass quality for HQ/LQ mapping
+        );
         if (!serviceDetails || !serviceDetails.id) {
-            error(`[Supplier Order Error - ${order._id}] Failed to get ExoSupplier Service Details/ID for ${order.platform}/${order.service}. Check mapping.`);
+            error(`[Supplier Order Error - ${order._id}] Failed to get ExoSupplier Service Details/ID for ${order.platform}/${order.service} (Quality: ${order.quality}). Check mapping.`);
             order.status = 'Supplier Error'; order.supplierStatus = 'Service ID/Details mapping failed';
             return 'Supplier Error'; // Indicate failure
         }
-        const serviceId = serviceDetails.id;
-        info(`[Supplier Order - ${order._id}] Mapped to ExoSupplier Service ID: ${serviceId}. Min: ${serviceDetails.min}, Max: ${serviceDetails.max}.`);
+        const targetSupplierServiceId = serviceDetails.id; // The specific HQ or LQ ID
+        info(`[Supplier Order - ${order._id}] Mapped to ExoSupplier Service ID: ${targetSupplierServiceId} for quality '${order.quality}'. Min: ${serviceDetails.min}, Max: ${serviceDetails.max}.`);
 
         // 2. Validate quantity against supplier limits BEFORE placing order
         if (order.quantity < serviceDetails.min || order.quantity > serviceDetails.max) {
-             error(`[Supplier Order Error - ${order._id}] Quantity ${order.quantity} is outside supplier limits (${serviceDetails.min}-${serviceDetails.max}) for Service ID ${serviceId}.`);
+             error(`[Supplier Order Error - ${order._id}] Quantity ${order.quantity} outside supplier limits (${serviceDetails.min}-${serviceDetails.max}) for Service ID ${targetSupplierServiceId}.`);
              order.status = 'Supplier Error'; order.supplierStatus = `Invalid quantity for supplier (Min: ${serviceDetails.min}, Max: ${serviceDetails.max})`;
              return 'Supplier Error'; // Indicate failure
         }
 
-        // 3. Place the order with ExoSupplier API
-        info(`[Supplier Order - ${order._id}] Calling placeExoSupplierOrder...`);
+        // 3. Place the order with ExoSupplier API using the specific mapped ID
+        info(`[Supplier Order - ${order._id}] Calling placeExoSupplierOrder with ID ${targetSupplierServiceId}...`);
         const supplierOrderId = await placeExoSupplierOrder(
-            serviceId,
+            targetSupplierServiceId, // Use the mapped HQ or LQ ID
             order.accountLink,
             order.quantity
             // Add runs/interval here if your Order model stores them:
@@ -80,10 +84,10 @@ async function placeSupplierOrderAndUpdateStatus(order) {
         );
 
         // 4. Update internal order document (in memory - save happens in caller)
-        order.supplierOrderId = supplierOrderId.toString(); // Store the ID received from ExoSupplier
-        order.status = 'Processing'; // Update our internal status
-        order.supplierStatus = 'Pending'; // Set initial supplier status (can be updated later by a status check job)
-        order.errorMessage = null; // Clear previous errors if placement was successful
+        order.supplierOrderId = supplierOrderId.toString();
+        order.status = 'Processing';
+        order.supplierStatus = 'Pending'; // Initial status from supplier
+        order.errorMessage = null;
         info(`[Supplier Order Success - ${order._id}] Placed ExoSupplier order ${supplierOrderId}. Internal status set to Processing.`);
         return 'Processing'; // Indicate success
 
@@ -91,8 +95,7 @@ async function placeSupplierOrderAndUpdateStatus(order) {
         // Catch errors from getExoSupplierServiceDetails or placeExoSupplierOrder
         error(`[Supplier Order Error - ${order._id}] Failed during ExoSupplier interaction: ${supplierError.message}`, supplierError);
         order.status = 'Supplier Error';
-        // Store a concise error message for display/debugging
-        order.supplierStatus = supplierError.message.length > 100 ? supplierError.message.substring(0, 97) + '...' : supplierError.message;
+        order.supplierStatus = supplierError.message.substring(0, 100); // Store concise error
         return 'Supplier Error'; // Indicate failure
     }
 }
@@ -108,43 +111,49 @@ export const initiateOrderAndPayment = async (req, res) => {
 
     try {
         const { platform, service, quality, accountLink, quantity, currency = 'KES', callbackUrl } = req.body;
-        const userId = req.user?._id;
+        const userId = req.user?._id; // Use the MongoDB _id attached by 'protect' middleware
         const userEmail = req.user?.email;
         const userName = req.user?.name || req.user?.displayName || `${req.user?.firstName || 'Valued'} ${req.user?.lastName || 'Customer'}`;
 
-        // --- Basic Validation ---
+        // Basic Validation
         if (!userId) { error("[Initiate Order] Missing User ID."); return res.status(401).json({ message: 'Unauthorized.' }); }
         const parsedQuantity = parseInt(quantity, 10);
         if (!platform || !service || !quality || !accountLink || !parsedQuantity || parsedQuantity <= 0 || !callbackUrl) { error(`[Initiate Order] Missing params user ${userId}`, req.body); return res.status(400).json({ message: 'Missing details.' }); }
         if (!REGISTERED_IPN_ID) { error("[Initiate Order] Server Misconfig - IPN ID"); return res.status(500).json({ message: 'Server config error [IPN].' }); }
 
-        // --- Pre-check with Supplier Service Details ---
-        info(`[Initiate Order Pre-check] Getting details for ${platform}/${service}...`);
-        const serviceDetailsCheck = getExoSupplierServiceDetails(platform, service);
+        // Pre-check with Supplier Service Details (uses HQ/LQ mapping internally now)
+        info(`[Initiate Order Pre-check] Getting details for ${platform}/${service} (Quality: ${quality})...`);
+        const serviceDetailsCheck = getExoSupplierServiceDetails(platform, service, quality); // Pass quality
         if (!serviceDetailsCheck) {
-             error(`[Initiate Order Pre-check] Invalid service selected: ${platform}/${service}.`);
-             return res.status(400).json({ message: `Service '${service}' for '${platform}' is unavailable.` });
+             error(`[Initiate Order Pre-check] Invalid service/quality selected: ${platform}/${service}/${quality}.`);
+             return res.status(400).json({ message: `Service '${service}' (Quality: ${quality}) for '${platform}' is unavailable.` });
         }
          if (parsedQuantity < serviceDetailsCheck.min || parsedQuantity > serviceDetailsCheck.max) {
               error(`[Initiate Order Pre-check] Quantity ${parsedQuantity} outside limits (${serviceDetailsCheck.min}-${serviceDetailsCheck.max}).`);
               return res.status(400).json({ message: `Quantity must be between ${serviceDetailsCheck.min} and ${serviceDetailsCheck.max}.` });
          }
         info(`[Initiate Order Pre-check] Service valid. Min: ${serviceDetailsCheck.min}, Max: ${serviceDetailsCheck.max}.`);
-        // --- End Pre-check ---
 
-        // --- Calculate Price (Using YOUR internal pricing) ---
+        // Calculate Price (Using YOUR internal pricing)
         const calculatedAmount = calculatePrice(platform, service, quality, parsedQuantity);
         if (calculatedAmount <= 0) { error(`[Initiate Order] Price calc failed.`); return res.status(400).json({ message: 'Price error.' }); }
 
-        // --- Prepare and Save Order ---
+        // Prepare and Save Order
         const orderDescription = `${parsedQuantity} ${quality} ${platform} ${service}`;
-        const orderData = { pesapalOrderId, userId: String(userId), platform: String(platform).toLowerCase(), service: String(service), quality: String(quality), accountLink: String(accountLink), quantity: parsedQuantity, amount: calculatedAmount, currency: String(currency), description: String(orderDescription).substring(0, 100), status: 'Pending Payment', paymentStatus: 'PENDING', callbackUrlUsed: String(callbackUrl) };
+        const orderData = {
+            pesapalOrderId,
+            userId: userId, // Store the MongoDB ObjectId
+            platform: String(platform).toLowerCase(), service: String(service), quality: String(quality),
+            accountLink: String(accountLink), quantity: parsedQuantity, amount: calculatedAmount,
+            currency: String(currency), description: String(orderDescription).substring(0, 100),
+            status: 'Pending Payment', paymentStatus: 'PENDING', callbackUrlUsed: String(callbackUrl)
+        };
         info(`[Order Initiate - Ref ${pesapalOrderId}] Saving order...`);
         savedOrder = new Order(orderData);
         await savedOrder.save();
         info(`[Order ${savedOrder._id} / Ref ${pesapalOrderId}] Created in DB.`);
 
-        // --- Initiate Pesapal Payment ---
+        // Initiate Pesapal Payment
         info(`[Order ${savedOrder._id}] Getting Pesapal token...`);
         const token = await pesapalService.getOAuthToken();
         info(`[Order ${savedOrder._id}] Registering Pesapal order...`);
@@ -169,15 +178,14 @@ export const initiateOrderAndPayment = async (req, res) => {
         error(`❌ Order initiation error Ref ${pesapalOrderId}:`, err);
         if (savedOrder?.status === 'Pending Payment') { try { savedOrder.status = 'Payment Failed'; savedOrder.paymentStatus = 'FAILED'; savedOrder.errorMessage = `Init failed: ${err.message}`; await savedOrder.save(); info(`[Order ${savedOrder?._id}] Marked Failed.`); } catch (saveErr) { error(`[Order ${savedOrder?._id}] FAILED update status after error:`, saveErr); } }
         if (err.name === 'ValidationError') return res.status(400).json({ message: "Validation failed", details: Object.values(err.errors).map(val => val.message) });
-        // Distinguish between supplier pre-check errors and payment errors
         const userMessage = err.message.includes('Service') || err.message.includes('Quantity') ? err.message : 'Payment initiation failed.';
-        res.status(500).json({ message: userMessage, error: err.message }); // Send specific message if possible
+        res.status(500).json({ message: userMessage, error: err.message });
     }
 };
 
 /** Handle Pesapal IPN */
 export const handleIpn = async (req, res) => {
-    const ipnBody = req.body || {}; const orderTrackingId = ipnBody.OrderTrackingId || ipnBody.orderTrackingId || ''; const notificationType = ipnBody.OrderNotificationType || ipnBody.orderNotificationType || ''; const merchantReference = ipnBody.OrderMerchantReference || ipnBody.orderMerchantReference || ''; // Our pesapalOrderId
+    const ipnBody = req.body || {}; const orderTrackingId = ipnBody.OrderTrackingId || ipnBody.orderTrackingId || ''; const notificationType = ipnBody.OrderNotificationType || ipnBody.orderNotificationType || ''; const merchantReference = ipnBody.OrderMerchantReference || ipnBody.orderMerchantReference || '';
     const ipnResponse = { orderNotificationType: notificationType, orderTrackingId: orderTrackingId, orderMerchantReference: merchantReference, status: 500 };
     info(`--- Received IPN --- Ref: ${merchantReference}, Tracking: ${orderTrackingId}, Type: ${notificationType}`); debug(`IPN Body:`, JSON.stringify(ipnBody, null, 2)); if (!orderTrackingId || notificationType.toUpperCase() !== 'IPNCHANGE' || !merchantReference) { error(`[IPN Validation Error - Ref ${merchantReference}]`); return res.status(200).json(ipnResponse); }
     let order = null; let transactionStatusData = null;
@@ -195,17 +203,81 @@ export const handleIpn = async (req, res) => {
 
 /** Get Order Stats (User) */
 export const getOrderStats = async (req, res) => {
-   info("[getOrderStats] Function called."); try { const userId = req.user?._id; info(`[getOrderStats] User ID: ${userId}`); if (!userId) { error("[getOrderStats] User ID not found."); return res.status(401).json({ message: 'Unauthorized.' }); } info(`[getOrderStats] Querying counts user ${userId}`); const [pendingCount, activeCount, completedCount] = await Promise.all([ Order.countDocuments({ userId: userId, status: { $in: ['Pending Payment', 'Payment Failed']} }), Order.countDocuments({ userId: userId, status: { $in: ['Processing', 'In Progress', 'Partial', 'Supplier Error']} }), Order.countDocuments({ userId: userId, status: 'Completed' }) ]); info(`[getOrderStats] Counts: P=${pendingCount}, A=${activeCount}, C=${completedCount}`); res.status(200).json({ pendingOrders: pendingCount, activeOrders: activeCount, completedOrders: completedCount }); } catch (err) { error(`❌ Error fetching stats user ${req.user?._id}:`, err); res.status(500).json({ message: 'Stats fetch failed', error: err.message }); }
+   info("[getOrderStats] Function called.");
+   try {
+       // FIX: Use the MongoDB _id from the attached req.user object
+       const userMongoId = req.user?._id; // This should be the MongoDB ObjectId
+
+       info(`[getOrderStats] User MongoDB ID from middleware: ${userMongoId}`); // Log the correct ID
+
+       if (!userMongoId) {
+           error("[getOrderStats] Error: MongoDB User ID (_id) not found on req.user.");
+           return res.status(401).json({ message: 'Unauthorized: User session invalid or user data missing.' });
+       }
+
+       // FIX: Query using the correct MongoDB ObjectId
+       info(`[getOrderStats] Querying counts for userId (MongoDB ObjectId): ${userMongoId}`);
+       const [pendingCount, activeCount, completedCount] = await Promise.all([
+           Order.countDocuments({ userId: userMongoId, status: { $in: ['Pending Payment', 'Payment Failed']} }),
+           Order.countDocuments({ userId: userMongoId, status: { $in: ['Processing', 'In Progress', 'Partial', 'Supplier Error']} }),
+           Order.countDocuments({ userId: userMongoId, status: 'Completed' })
+       ]);
+       info(`[getOrderStats] Counts for user ${userMongoId}: Pending=${pendingCount}, Active=${activeCount}, Completed=${completedCount}`);
+
+       res.status(200).json({
+           pendingOrders: pendingCount,
+           activeOrders: activeCount,
+           completedOrders: completedCount
+       });
+
+   } catch (err) {
+       error(`❌ Error fetching order stats for user ${req.user?._id}:`, err);
+       res.status(500).json({ message: 'Stats fetch failed', error: err.message });
+   }
 };
 
 /** Get User Orders (Paginated) */
 export const getUserOrders = async (req, res) => {
-    info("[getUserOrders] Function called."); try { const userId = req.user?._id; if (!userId) { return res.status(401).json({ message: 'Unauthorized.' }); } let page = parseInt(req.query.page) || 1; let limit = parseInt(req.query.limit) || 10; if (page < 1) page = 1; if (limit < 1) limit = 1; if (limit > 100) limit = 100; const skip = (page - 1) * limit; info(`[getUserOrders] Fetching user ${userId}, P:${page}, L:${limit}`); const [orders, totalOrders] = await Promise.all([ Order.find({ userId: userId }).select('-paymentStatus -errorMessage -userId -pesapalTrackingId -pesapalOrderId -callbackUrlUsed -__v').sort({ createdAt: -1 }).skip(skip).limit(limit).lean(), Order.countDocuments({ userId: userId }) ]); info(`[getUserOrders] Found ${orders.length}/${totalOrders} orders.`); res.status(200).json({ orders, page, pages: Math.ceil(totalOrders / limit), total: totalOrders }); } catch (err) { error(`❌ Error fetching orders user ${req.user?._id}:`, err); res.status(500).json({ message: 'Order fetch failed', error: err.message }); }
+    info("[getUserOrders] Function called.");
+    try {
+        const userMongoId = req.user?._id; // FIX: Use MongoDB _id
+        if (!userMongoId) {
+             return res.status(401).json({ message: 'Unauthorized: User session invalid.' });
+        }
+        let page = parseInt(req.query.page) || 1; let limit = parseInt(req.query.limit) || 10; if (page < 1) page = 1; if (limit < 1) limit = 1; if (limit > 100) limit = 100; const skip = (page - 1) * limit;
+
+        info(`[getUserOrders] Fetching orders for user MongoDB ID ${userMongoId}, P:${page}, L:${limit}`);
+        const [orders, totalOrders] = await Promise.all([
+            Order.find({ userId: userMongoId }) // FIX: Query with MongoDB _id
+                 .select('-paymentStatus -errorMessage -userId -pesapalTrackingId -pesapalOrderId -callbackUrlUsed -__v')
+                 .sort({ createdAt: -1 })
+                 .skip(skip)
+                 .limit(limit)
+                 .lean(),
+            Order.countDocuments({ userId: userMongoId }) // FIX: Query with MongoDB _id
+        ]);
+
+        info(`[getUserOrders] Found ${orders.length}/${totalOrders} orders.`);
+        res.status(200).json({ orders, page, pages: Math.ceil(totalOrders / limit), total: totalOrders });
+    } catch (err) { error(`❌ Error fetching orders user ${req.user?._id}:`, err); res.status(500).json({ message: 'Order fetch failed', error: err.message }); }
 };
 
 /** Get Single Order Details (User) */
 export const getOrderDetails = async (req, res) => {
-    info("[getOrderDetails] Function called."); try { const userId = req.user?._id; const orderId = req.params.id; if (!userId) { return res.status(401).json({ message: 'Unauthorized.' }); } if (!mongoose.Types.ObjectId.isValid(orderId)) { info(`[getOrderDetails] Invalid ID: ${orderId}`); return res.status(400).json({ message: 'Invalid Order ID.' }); } info(`[getOrderDetails] Fetching order ${orderId} for user ${userId}`); const order = await Order.findOne({ _id: orderId, userId: userId }).select('-userId -__v'); if (!order) { info(`[getOrderDetails] Order ${orderId} not found/denied user ${userId}.`); return res.status(404).json({ message: 'Order not found/access denied.' }); } info(`[getOrderDetails] Success for Order ID ${orderId}`); res.status(200).json(order); } catch (err) { error(`❌ Error fetching details order ${req.params.id}, User ${req.user?._id}:`, err); res.status(500).json({ message: 'Details fetch failed', error: err.message }); }
+    info("[getOrderDetails] Function called.");
+    try {
+        const userMongoId = req.user?._id; // FIX: Use MongoDB _id
+        const orderId = req.params.id;
+        if (!userMongoId) { return res.status(401).json({ message: 'Unauthorized.' }); }
+        if (!mongoose.Types.ObjectId.isValid(orderId)) { info(`[getOrderDetails] Invalid ID: ${orderId}`); return res.status(400).json({ message: 'Invalid Order ID.' }); }
+
+        info(`[getOrderDetails] Fetching order ${orderId} for user MongoDB ID ${userMongoId}`);
+        // FIX: Query with MongoDB _id for userId
+        const order = await Order.findOne({ _id: orderId, userId: userMongoId }).select('-userId -__v');
+
+        if (!order) { info(`[getOrderDetails] Order ${orderId} not found/denied user ${userMongoId}.`); return res.status(404).json({ message: 'Order not found/access denied.' }); }
+        info(`[getOrderDetails] Success for Order ID ${orderId}`); res.status(200).json(order);
+    } catch (err) { error(`❌ Error fetching details order ${req.params.id}, User ${req.user?._id}:`, err); res.status(500).json({ message: 'Details fetch failed', error: err.message }); }
 };
 
 /** Get Order Status by Merchant Reference (Callback Page) */
