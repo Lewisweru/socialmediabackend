@@ -1,9 +1,10 @@
-// config/firebaseAdmin.js (Checking Braces and Structure)
+// config/firebaseAdmin.js (Corrected - Using fs to load JSON)
 
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin'; // Default import for CommonJS package
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs'; // Import the Node.js File System module
 
 // --- Determine __dirname for ESM ---
 const __filename = fileURLToPath(import.meta.url);
@@ -15,7 +16,7 @@ console.log(`[Firebase Admin Config] Attempting to load env from: ${envPath}`);
 dotenv.config({ path: envPath });
 
 // --- Credential Handling ---
-let firebaseCredential;
+let firebaseCredentialObject;
 
 const googleAppCreds = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
@@ -23,65 +24,58 @@ const serviceAccountBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
 console.log("[Firebase Admin Config] Checking for credentials...");
 
 // 1. Check GOOGLE_APPLICATION_CREDENTIALS (Path)
-if (googleAppCreds) { // <--- Brace 1 OPEN
+if (googleAppCreds) {
     const keyPath = path.resolve(__dirname, '..', googleAppCreds);
     console.log(`[Firebase Admin Config] Attempting to load key from path: ${keyPath}`);
-    try { // <--- Brace 2 OPEN
-        firebaseCredential = admin.credential.cert(keyPath);
+    try {
+        // FIX: Read the file using fs and parse it
+        if (!fs.existsSync(keyPath)) {
+             throw new Error(`Service account key file not found at path: ${keyPath}`);
+        }
+        const keyFileContent = fs.readFileSync(keyPath, 'utf8');
+        const serviceAccount = JSON.parse(keyFileContent);
+        firebaseCredentialObject = admin.credential.cert(serviceAccount);
         console.log("[Firebase Admin Config] Using service account key from file path.");
-    } catch (e) { // <--- Brace 2 CLOSE, Brace 3 OPEN
-        console.error(`❌ Firebase Admin Config: Error loading key file from ${keyPath}.`);
+    } catch (e) {
+        console.error(`❌ Firebase Admin Config: Error loading or parsing key file from ${keyPath}.`);
         console.error(e);
         process.exit(1);
-    } // <--- Brace 3 CLOSE
+    }
 // 2. Check FIREBASE_SERVICE_ACCOUNT_BASE64 (Base64 JSON)
-} else if (serviceAccountBase64) { // <--- Brace 4 OPEN (corresponds to Brace 1)
+} else if (serviceAccountBase64) {
     console.log("[Firebase Admin Config] Found Base64 credential env var...");
-    try { // <--- Brace 5 OPEN
+    try {
         const serviceAccountJsonString = Buffer.from(serviceAccountBase64, 'base64').toString('utf-8');
         const serviceAccount = JSON.parse(serviceAccountJsonString);
-        firebaseCredential = admin.credential.cert(serviceAccount);
+        firebaseCredentialObject = admin.credential.cert(serviceAccount);
         console.log("[Firebase Admin Config] Using service account key from Base64 env var.");
-    } catch (e) { // <--- Brace 5 CLOSE, Brace 6 OPEN
+    } catch (e) {
         console.error("❌ Firebase Admin Config: Error parsing FIREBASE_SERVICE_ACCOUNT_BASE64.");
         console.error(e);
         process.exit(1);
-    } // <--- Brace 6 CLOSE
+    }
 // 3. No credentials found
-} else { // <--- Brace 7 OPEN (corresponds to Brace 1 & 4)
+} else {
     console.error("❌ Firebase Admin Config: No Firebase credentials found.");
     process.exit(1);
-} // <--- Brace 7 CLOSE (ends the if/else if/else block)
+}
 
 // --- Initialize Firebase Admin SDK ---
-// This section seems correctly placed *after* the credential handling block
-if (!admin.apps.length) { // <--- Brace 8 OPEN
+if (!admin.apps.length) {
     console.log("[Firebase Admin Config] Initializing Firebase Admin SDK...");
-    try { // <--- Brace 9 OPEN
+    try {
         admin.initializeApp({
-            credential: firebaseCredential // Use the determined credential
+            credential: firebaseCredentialObject
         });
         console.log("✅ Firebase Admin SDK Initialized Successfully.");
-    } catch (e) { // <--- Brace 9 CLOSE, Brace 10 OPEN
+    } catch (e) {
         console.error("❌ Firebase Admin SDK Initialization Failed:");
         console.error(e);
         process.exit(1);
-    } // <--- Brace 10 CLOSE
-} else { // <--- Brace 11 OPEN (corresponds to Brace 8)
-    console.log(`[Firebase Admin Config] SDK already initialized. App name: ${admin.apps[0]?.name || '[DEFAULT]'}`);
-} // <--- Brace 11 CLOSE (ends the initialization block)
+    }
+} else {
+    console.log(`[Firebase Admin Config] SDK already initialized.`);
+}
 
 // --- Export initialized services ---
-// This seems correctly placed *after* the initialization block
-export const firebaseAdminAuth = admin.auth(); // Line 91 according to error
-
-// Problem Area likely starts here based on error line numbers:
-// If there was extra code *between* the initialization block (ending Brace 11)
-// and the export statement, it could cause the "Declaration or statement expected"
-// error (line 58 might have been where the code expected the initialization block
-// to end, or where an unexpected token started).
-
-// Check carefully for any stray characters, comments, or incomplete statements
-// *between* line ~84 (where Brace 11 closes) and line 91 (the export).
-
-// Also, ensure there are no extra closing braces `}` anywhere after line 91.
+export const firebaseAdminAuth = admin.auth();
