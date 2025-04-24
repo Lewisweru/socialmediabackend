@@ -1,99 +1,117 @@
-// middleware/authMiddleware.js (Corrected - Removed .lean())
-
 import { firebaseAdminAuth } from '../config/firebaseAdmin.js';
 import User from '../models/User.js';
 import { info, warn, error, debug } from '../utils/logger.js';
 
 /**
- * @description Middleware to verify Firebase ID Token. Attaches MongoDB user doc to req.user.
+ * Enhanced auth middleware with:
+ * - Better token verification
+ * - Session persistence checks
+ * - Improved error handling
  */
 export const protect = async (req, res, next) => {
   let token;
   const authHeader = req.headers.authorization;
-  const requestPath = req.originalUrl; // Get path for context
+  const requestPath = req.originalUrl;
 
-  info(`[Auth Protect ENTRY] Path: ${requestPath}. Auth Header Present: ${!!authHeader}`);
+  info(`[Auth] Request to protected route: ${requestPath}`);
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    try {
-      token = authHeader.split(' ')[1];
-      if (!token) {
-        warn(`[Auth Protect - ${requestPath}] Token format invalid.`);
-        // Ensure response is sent and function exits
-        return res.status(401).json({ message: 'Not authorized, token format invalid' });
-      }
+  // 1. Check for Authorization header
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    warn(`[Auth] No token provided for ${requestPath}`);
+    return res.status(401).json({ 
+      message: 'Not authorized, no token provided',
+      code: 'MISSING_TOKEN'
+    });
+  }
 
-      debug(`[Auth Protect - ${requestPath}] Verifying Firebase ID Token...`);
-      const decodedToken = await firebaseAdminAuth.verifyIdToken(token);
-      const firebaseUserId = decodedToken.uid; // This is the Firebase UID string
-      debug(`[Auth Protect - ${requestPath}] Token verified for Firebase UID: ${firebaseUserId}`);
-
-      // Find user by the dedicated 'firebaseUid' field
-      info(`[Auth Protect - ${requestPath}] Searching DB for user with firebaseUid: ${firebaseUserId}`);
-      let mongoUser = null;
-      try {
-          // FIX: Remove .lean() to get full Mongoose document instead of plain object
-          mongoUser = await User.findOne({ firebaseUid: firebaseUserId }).select('-password');
-      } catch (dbError) {
-           error(`[Auth Protect - ${requestPath}] Database error during findOne({ firebaseUid: ${firebaseUserId} }):`, dbError);
-           // Ensure response is sent and function exits
-           return res.status(500).json({ message: 'Database error during authentication.' });
-      }
-
-      // Check if User Found and Log Result
-      if (!mongoUser) {
-        warn(`[Auth Protect - ${requestPath}] User UID ${firebaseUserId} verified, but NOT found in DB.`);
-        // Ensure response is sent and function exits
-        return res.status(401).json({ message: 'User not found in application database.' });
-      } else {
-        info(`[Auth Protect - ${requestPath}] Found user document in DB via firebaseUid.`);
-        // Log the Mongoose document's _id directly
-        // Mongoose documents have an _id property which should be the ObjectId
-        debug(`[Auth Protect - ${requestPath}] mongoUser object found (Mongoose doc). _id: ${mongoUser._id}`);
-        if (!mongoUser._id) {
-             // This check is still valid, even without .lean()
-             error(`[Auth Protect CRITICAL - ${requestPath}] Found user document BUT it's missing the _id field! UID: ${firebaseUserId}`);
-             // Ensure response is sent and function exits
-             return res.status(500).json({ message: 'User data integrity issue.' });
-        } else {
-             // Log the type as well, it should be 'object' for a Mongoose doc _id (ObjectId)
-             debug(`[Auth Protect - ${requestPath}] mongoUser._id is present: ${mongoUser._id} (Type: ${typeof mongoUser._id})`);
-        }
-      }
-
-      // Assign the full Mongoose document to req.user
-      req.user = mongoUser;
-      // Log after assignment, checking req.user._id directly
-      info(`[Auth Protect - ${requestPath}] Assigned found user (Mongoose doc) to req.user. User _id: ${req.user?._id} (Type: ${typeof req.user?._id})`);
-
-      // Proceed to next middleware/controller ONLY if user is found and assigned
-      debug(`[Auth Protect - ${requestPath}] Calling next().`);
-      next();
-
-    } catch (err) { // Catch Firebase verification errors or others
-      error(`[Auth Protect ERROR - ${requestPath}] Token verification/processing failed:`, err.code || 'Unknown Code', err.message);
-      let errorMessage = 'Not authorized, token verification failed';
-      let statusCode = 401;
-      if (err.code === 'auth/id-token-expired') { errorMessage = 'Not authorized, token expired'; statusCode = 403; }
-      else if (err.code === 'auth/argument-error') { errorMessage = 'Not authorized, token malformed'; }
-      else if (err.code === 'auth/id-token-revoked') { errorMessage = 'Not authorized, token revoked'; statusCode = 403; }
-      // Ensure we return here
-      return res.status(statusCode).json({ message: errorMessage });
+  // 2. Extract token
+  token = authHeader.split(' ')[1];
+  
+  try {
+    // 3. Verify Firebase token with checkRevoked
+    debug(`[Auth] Verifying token for ${requestPath}`);
+    const decodedToken = await firebaseAdminAuth.verifyIdToken(token, true);
+    const firebaseUserId = decodedToken.uid;
+    
+    // 4. Check token expiration
+    const expirationTime = new Date(decodedToken.exp * 1000);
+    if (expirationTime < new Date()) {
+      warn(`[Auth] Expired token for UID: ${firebaseUserId}`);
+      return res.status(401).json({ 
+        message: 'Session expired, please login again',
+        code: 'TOKEN_EXPIRED'
+      });
     }
-  } else {
-    warn(`[Auth Protect - ${requestPath}] No token/invalid format.`);
-    // Ensure we return here
-    return res.status(401).json({ message: 'Not authorized, no token provided or invalid format' });
+
+    // 5. Find user in database
+    debug(`[Auth] Finding user for UID: ${firebaseUserId}`);
+    const user = await User.findOne({ firebaseUid: firebaseUserId })
+      .select('-password')
+      .lean();
+
+    if (!user) {
+      warn(`[Auth] No user found for UID: ${firebaseUserId}`);
+      return res.status(404).json({ 
+        message: 'User account not found',
+        code: 'USER_NOT_FOUND'
+      });
+    }
+
+    // 6. Attach user to request
+    req.user = user;
+    debug(`[Auth] User authenticated: ${user._id}`);
+    next();
+
+  } catch (err) {
+    // Handle specific Firebase errors
+    let statusCode = 401;
+    let errorCode = 'AUTH_ERROR';
+    let message = 'Not authorized';
+
+    switch (err.code) {
+      case 'auth/id-token-expired':
+        message = 'Session expired, please login again';
+        errorCode = 'TOKEN_EXPIRED';
+        statusCode = 403;
+        break;
+      case 'auth/id-token-revoked':
+        message = 'Session revoked, please login again';
+        errorCode = 'TOKEN_REVOKED';
+        statusCode = 403;
+        break;
+      case 'auth/argument-error':
+        message = 'Invalid authentication token';
+        errorCode = 'INVALID_TOKEN';
+        break;
+      default:
+        statusCode = 500;
+        errorCode = 'SERVER_ERROR';
+        message = 'Authentication failed';
+    }
+
+    error(`[Auth] Error: ${err.code || err.message}`);
+    return res.status(statusCode).json({ 
+      message,
+      code: errorCode
+    });
   }
 };
 
-// Optional: isAdmin middleware
-/*
+/**
+ * Admin check middleware
+ */
 export const isAdmin = (req, res, next) => {
-  if (req.user && req.user.role === 'admin') {
-    next();
-  } else {
-    res.status(403).json({ message: 'Forbidden: Admin privileges required' });
+  if (!req.user) {
+    return res.status(401).json({ message: 'Not authenticated' });
   }
+
+  if (req.user.role !== 'admin') {
+    warn(`[Auth] Admin access denied for user: ${req.user._id}`);
+    return res.status(403).json({ 
+      message: 'Admin privileges required',
+      code: 'ADMIN_REQUIRED'
+    });
+  }
+
+  next();
 };
-*/
