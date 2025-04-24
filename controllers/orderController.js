@@ -1,4 +1,4 @@
-// controllers/orderController.js (FULL CODE - Fixed userId CastError)
+// controllers/orderController.js (FULL CODE - Fixed userId Usage)
 
 import Order from '../models/Order.js';
 import User from '../models/User.js';
@@ -116,10 +116,10 @@ export const initiateOrderAndPayment = async (req, res) => {
         const userName = req.user?.name || req.user?.displayName || `${req.user?.firstName || 'Valued'} ${req.user?.lastName || 'Customer'}`;
 
         // Basic Validation
-        if (!userMongoId) { error("[Initiate Order] Missing User ID."); return res.status(401).json({ message: 'Unauthorized.' }); }
+        if (!userMongoId) { error("[Initiate Order] Missing User ID from authentication context."); return res.status(401).json({ message: 'Unauthorized. User session might be invalid.' }); }
         const parsedQuantity = parseInt(quantity, 10);
-        if (!platform || !service || !quality || !accountLink || !parsedQuantity || parsedQuantity <= 0 || !callbackUrl) { error(`[Initiate Order] Missing params user ${userMongoId}`, req.body); return res.status(400).json({ message: 'Missing details.' }); }
-        if (!REGISTERED_IPN_ID) { error("[Initiate Order] Server Misconfig - IPN ID"); return res.status(500).json({ message: 'Server config error [IPN].' }); }
+        if (!platform || !service || !quality || !accountLink || !parsedQuantity || parsedQuantity <= 0 || !callbackUrl) { error(`[Initiate Order] Missing params user ${userMongoId}`, req.body); return res.status(400).json({ message: 'Missing required order details.' }); }
+        if (!REGISTERED_IPN_ID) { error("[Initiate Order] Server Misconfig - IPN ID not set."); return res.status(500).json({ message: 'Server configuration error [IPN].' }); }
 
         // Pre-check with Supplier Service Details (uses HQ/LQ mapping internally now)
         info(`[Initiate Order Pre-check] Getting details for ${platform}/${service} (Quality: ${quality})...`);
@@ -136,19 +136,19 @@ export const initiateOrderAndPayment = async (req, res) => {
 
         // Calculate Price (Using YOUR internal pricing)
         const calculatedAmount = calculatePrice(platform, service, quality, parsedQuantity);
-        if (calculatedAmount <= 0) { error(`[Initiate Order] Price calc failed.`); return res.status(400).json({ message: 'Price error.' }); }
+        if (calculatedAmount <= 0) { error(`[Initiate Order] Price calc failed or zero.`); return res.status(400).json({ message: 'Invalid calculated price.' }); }
 
         // Prepare and Save Order
         const orderDescription = `${parsedQuantity} ${quality} ${platform} ${service}`;
         const orderData = {
             pesapalOrderId,
-            userId: userMongoId, // Store the MongoDB ObjectId
+            userId: userMongoId, // ** IMPORTANT: Store the MongoDB ObjectId here **
             platform: String(platform).toLowerCase(), service: String(service), quality: String(quality),
             accountLink: String(accountLink), quantity: parsedQuantity, amount: calculatedAmount,
             currency: String(currency), description: String(orderDescription).substring(0, 100),
             status: 'Pending Payment', paymentStatus: 'PENDING', callbackUrlUsed: String(callbackUrl)
         };
-        info(`[Order Initiate - Ref ${pesapalOrderId}] Saving order...`);
+        info(`[Order Initiate - Ref ${pesapalOrderId}] Saving order with userId: ${userMongoId}...`);
         savedOrder = new Order(orderData);
         await savedOrder.save();
         info(`[Order ${savedOrder._id} / Ref ${pesapalOrderId}] Created in DB.`);
@@ -176,125 +176,171 @@ export const initiateOrderAndPayment = async (req, res) => {
 
     } catch (err) {
         error(`❌ Order initiation error Ref ${pesapalOrderId}:`, err);
-        if (savedOrder?.status === 'Pending Payment') { try { savedOrder.status = 'Payment Failed'; savedOrder.paymentStatus = 'FAILED'; savedOrder.errorMessage = `Init failed: ${err.message}`; await savedOrder.save(); info(`[Order ${savedOrder?._id}] Marked Failed.`); } catch (saveErr) { error(`[Order ${savedOrder?._id}] FAILED update status after error:`, saveErr); } }
+        // Attempt to mark order as failed if it exists but something went wrong
+        if (savedOrder && !savedOrder.__v && savedOrder.status === 'Pending Payment') { try { savedOrder.status = 'Payment Failed'; savedOrder.paymentStatus = 'FAILED'; savedOrder.errorMessage = `Init failed: ${err.message}`; await savedOrder.save(); info(`[Order ${savedOrder?._id}] Marked Failed due to error.`); } catch (saveErr) { error(`[Order ${savedOrder?._id}] FAILED update status after initiation error:`, saveErr); } }
+        // Handle specific errors
         if (err.name === 'ValidationError') return res.status(400).json({ message: "Validation failed", details: Object.values(err.errors).map(val => val.message) });
+        // Return appropriate message if pre-check failed
         const userMessage = err.message.includes('Service') || err.message.includes('Quantity') ? err.message : 'Payment initiation failed.';
         res.status(500).json({ message: userMessage, error: err.message });
     }
 };
 
 /** Handle Pesapal IPN */
-// controllers/orderController.js
-
 export const handleIpn = async (req, res) => {
     const ipnBody = req.body || {};
     const orderTrackingId = ipnBody.OrderTrackingId || ipnBody.orderTrackingId || '';
     const notificationType = ipnBody.OrderNotificationType || ipnBody.orderNotificationType || '';
-    const merchantReference = ipnBody.OrderMerchantReference || ipnBody.orderMerchantReference || ''; // Our pesapalOrderId
-    const ipnResponse = { /* ... default response ... */ };
+    const merchantReference = ipnBody.OrderMerchantReference || ipnBody.orderMerchantReference || ''; // Our pesapalOrderId (UUID)
+    // Prepare response structure EARLY, default to error
+    const ipnResponse = {
+        orderNotificationType: notificationType,
+        orderTrackingId: orderTrackingId,
+        orderMerchantReference: merchantReference,
+        status: 500 // Default error - explicitly set to 200 on successful processing
+    };
 
-    // ---> ADD LOG 1 <---
+    // ---> LOG 1 <---
     info(`[handleIpn ENTRY] Ref: ${merchantReference}, Tracking: ${orderTrackingId}, Type: ${notificationType}`);
     debug(`[handleIpn BODY]`, JSON.stringify(ipnBody, null, 2));
 
     if (!orderTrackingId || notificationType.toUpperCase() !== 'IPNCHANGE' || !merchantReference) {
-        error(`[handleIpn Validation Error] Ref: ${merchantReference}`);
-        return res.status(200).json(ipnResponse);
+        error(`[handleIpn Validation Error] Ref: ${merchantReference}, Invalid Data Received.`);
+        return res.status(200).json(ipnResponse); // Respond 200 OK but JSON indicates internal error code
     }
 
     let order = null; let transactionStatusData = null;
     try {
-        // ---> ADD LOG 2 <---
-        info(`[handleIpn - Ref ${merchantReference}] Searching Order in DB...`);
+        // ---> LOG 2 <---
+        info(`[handleIpn - Ref ${merchantReference}] Searching Order in DB by pesapalOrderId...`);
         order = await Order.findOne({ pesapalOrderId: merchantReference });
-        if (!order) { /* ... handle not found ... */ }
-         // ---> ADD LOG 3 <---
+        if (!order) {
+             error(`[handleIpn Error - Ref ${merchantReference}] Order not found in DB.`);
+             ipnResponse.status = 404; // Not found internal code
+             return res.status(200).json(ipnResponse);
+        }
+         // ---> LOG 3 <---
         info(`[handleIpn - Ref ${merchantReference}] Found Order ${order._id}. Current Status: ${order.status}, Payment Status: ${order.paymentStatus}`);
 
-        // ---> ADD LOG 4 <---
+        // ---> LOG 4 <---
         info(`[handleIpn - Order ${order._id}] Querying Pesapal Status (Tracking ID: ${orderTrackingId})...`);
         const token = await pesapalService.getOAuthToken();
         transactionStatusData = await pesapalService.getTransactionStatus(token, orderTrackingId);
-         // ---> ADD LOG 5 <---
+         // ---> LOG 5 <---
         info(`[handleIpn - Order ${order._id}] Pesapal Status Response Received:`, transactionStatusData);
         const fetchedPesapalStatus = transactionStatusData?.payment_status_description?.toUpperCase() || 'UNKNOWN';
+        const fetchedPesapalDesc = transactionStatusData?.description || ''; // Capture reason if available
 
-        let internalStatusUpdate = order.status; let shouldSaveChanges = false; let newErrorMessage = order.errorMessage;
-         // ---> ADD LOG 6 <---
-        info(`[handleIpn - Order ${order._id}] Processing Pesapal Status: ${fetchedPesapalStatus}`);
+        let internalStatusUpdate = order.status; // Start with current internal status
+        let shouldSaveChanges = false; // Flag to track if DB update is needed
+        let newErrorMessage = order.errorMessage; // Preserve existing error unless overwritten
+
+         // ---> LOG 6 <---
+        info(`[handleIpn - Order ${order._id}] Processing Pesapal Status Description: ${fetchedPesapalStatus}`);
 
         // --- Update stored Pesapal payment status ---
-        if ((order.paymentStatus !== fetchedPesapalStatus) && fetchedPesapalStatus !== 'UNKNOWN') { info(`[handleIpn - Order ${order._id}] Updating DB paymentStatus -> '${fetchedPesapalStatus}'`); order.paymentStatus = fetchedPesapalStatus; shouldSaveChanges = true; }
+        if ((order.paymentStatus !== fetchedPesapalStatus) && fetchedPesapalStatus !== 'UNKNOWN') {
+            info(`[handleIpn - Order ${order._id}] Updating DB paymentStatus from '${order.paymentStatus}' to '${fetchedPesapalStatus}'`);
+            order.paymentStatus = fetchedPesapalStatus;
+            shouldSaveChanges = true; // Mark that we need to save the order document
+        }
 
         // --- Determine internal status changes ---
+        // Only process if the order is still awaiting payment confirmation or failed previously
         if (order.status === 'Pending Payment' || order.status === 'Payment Failed') {
             switch (fetchedPesapalStatus) {
-                case 'COMPLETED':
-                     // ---> ADD LOG 7 <---
+                case 'COMPLETED': // Pesapal status_code: 1
+                     // ---> LOG 7 <---
                     info(`[handleIpn - Order ${order._id}] Pesapal COMPLETED. Calling placeSupplierOrderAndUpdateStatus...`);
-                    internalStatusUpdate = await placeSupplierOrderAndUpdateStatus(order); // This helper has its own logs now
-                     // ---> ADD LOG 8 <---
+                    internalStatusUpdate = await placeSupplierOrderAndUpdateStatus(order); // Attempt to place order with supplier
+                     // ---> LOG 8 <---
                     info(`[handleIpn - Order ${order._id}] placeSupplierOrderAndUpdateStatus returned: ${internalStatusUpdate}`);
+                    // Update error message based on supplier placement outcome
                     newErrorMessage = (internalStatusUpdate === 'Supplier Error') ? order.supplierStatus : null;
-                    shouldSaveChanges = true;
+                    shouldSaveChanges = true; // Changes were made (status or potentially supplier fields)
                     break;
-                // ... other cases ...
-                case 'FAILED': internalStatusUpdate = 'Payment Failed'; /*...*/ info(`[handleIpn - Order ${order._id}] FAILED.`); shouldSaveChanges = true; break;
-                case 'INVALID': case 'REVERSED': internalStatusUpdate = 'Cancelled'; /*...*/ info(`[handleIpn - Order ${order._id}] -> Cancelled.`); shouldSaveChanges = true; break;
-                case 'PENDING': info(`[handleIpn - Order ${order._id}] PENDING.`); break;
-                default: warn(`[handleIpn - Order ${order._id}] Unhandled status: '${fetchedPesapalStatus}'.`);
+                case 'FAILED': // Pesapal status_code: 2
+                    internalStatusUpdate = 'Payment Failed';
+                    newErrorMessage = fetchedPesapalDesc || 'Payment Failed (reported by Pesapal IPN)';
+                    shouldSaveChanges = true;
+                    info(`[handleIpn - Order ${order._id}] FAILED. Setting Internal Status to 'Payment Failed'.`);
+                    break;
+                case 'INVALID': // Pesapal status_code: 0
+                case 'REVERSED': // Pesapal status_code: 3
+                    internalStatusUpdate = 'Cancelled'; // Map these to Cancelled in our system
+                    newErrorMessage = `Payment status ${fetchedPesapalStatus}. ${fetchedPesapalDesc || ''}`.trim();
+                    shouldSaveChanges = true;
+                    info(`[handleIpn - Order ${order._id}] ${fetchedPesapalStatus}. Setting Internal Status to 'Cancelled'.`);
+                    break;
+                case 'PENDING':
+                     // If Pesapal *still* reports pending, no change needed for our internal status yet.
+                     info(`[handleIpn - Order ${order._id}] PENDING. Internal status remains '${order.status}'.`);
+                     break;
+                default: // Includes UNKNOWN or other unexpected values
+                     warn(`[handleIpn - Order ${order._id}] Received unhandled fetched payment_status_description: '${fetchedPesapalStatus}'.`);
+                     // Decide if this should trigger an error state or just be logged
+                     // Maybe set to 'Supplier Error' or keep 'Pending Payment'?
+                     // internalStatusUpdate = 'Supplier Error';
+                     // newErrorMessage = `Unhandled Pesapal status: ${fetchedPesapalStatus}`;
+                     // shouldSaveChanges = true;
             }
+            // Apply the determined internal status update if it differs
             if (order.status !== internalStatusUpdate) {
-                order.status = internalStatusUpdate; order.errorMessage = newErrorMessage;
-                // ---> ADD LOG 9 <---
+                order.status = internalStatusUpdate;
+                order.errorMessage = newErrorMessage; // Update error message too
+                 // ---> LOG 9 <---
                 info(`[handleIpn - Order ${order._id}] Internal status CHANGED to -> '${order.status}'.`);
-                shouldSaveChanges = true; // Ensure flag is set
+                shouldSaveChanges = true; // Ensure save flag is set if internal status changes
             }
-        } else { info(`[handleIpn - Order ${order._id}] Internal status '${order.status}' not modified.`); }
+        } else {
+            // Order is already Processing, Completed, etc. Log but don't change internal status based on IPN.
+            info(`[handleIpn - Order ${order._id}] Internal status '${order.status}' not modified by IPN.`);
+        }
 
-        if (shouldSaveChanges) { /* ... save ... */ } else { /* ... log no changes ... */ }
+        // Save changes if any were made
+        if (shouldSaveChanges) {
+            info(`[handleIpn - Order ${order._id}] Saving changes to DB...`);
+            await order.save();
+            info(`[handleIpn Processed - Order ${order._id}] Save successful. Final Status: ${order.status}, Payment: ${order.paymentStatus}`);
+            ipnResponse.status = 200; // Indicate successful processing in JSON response
+        } else {
+            info(`[handleIpn - Order ${order._id}] No database changes required.`);
+            ipnResponse.status = 200; // Mark successful processing (even if no-op)
+        }
+
+        // Acknowledge IPN Receipt to Pesapal using JSON
+        info(`[handleIpn Response Sent - Order ${order._id}]: ${JSON.stringify(ipnResponse)}`);
         res.status(200).json(ipnResponse);
-    } catch (err) { /* ... error handling ... */ }
+
+    } catch (err) {
+        error(`❌ Unhandled Error processing IPN for MerchantRef ${merchantReference}:`, err);
+        ipnResponse.status = 500; // Set error status in JSON response
+        // As per Pesapal docs, still respond HTTP 200 but indicate error in JSON body
+        res.status(200).json(ipnResponse);
+    }
 };
 
 /** Get Order Stats (User) - CORRECTED */
 export const getOrderStats = async (req, res) => {
    info("[getOrderStats] Function called.");
    try {
-       // Use the MongoDB _id from the attached req.user object
-       const userMongoId = req.user?._id; // This should be the MongoDB ObjectId
-
+       const userMongoId = req.user?._id; // Use the MongoDB _id from req.user
        info(`[getOrderStats] User MongoDB ID from middleware: ${userMongoId}`);
-
        if (!userMongoId) {
            error("[getOrderStats] Error: MongoDB User ID (_id) not found on req.user.");
            return res.status(401).json({ message: 'Unauthorized: User session invalid or user data missing.' });
        }
-
-       // Query using the correct MongoDB ObjectId
-       info(`[getOrderStats] Querying counts for userId (MongoDB ObjectId): ${userMongoId}`);
+       info(`[getOrderStats] Querying counts for userId (ObjectId): ${userMongoId}`);
        const [pendingCount, activeCount, completedCount] = await Promise.all([
            Order.countDocuments({ userId: userMongoId, status: { $in: ['Pending Payment', 'Payment Failed']} }),
            Order.countDocuments({ userId: userMongoId, status: { $in: ['Processing', 'In Progress', 'Partial', 'Supplier Error']} }),
            Order.countDocuments({ userId: userMongoId, status: 'Completed' })
        ]);
        info(`[getOrderStats] Counts for user ${userMongoId}: Pending=${pendingCount}, Active=${activeCount}, Completed=${completedCount}`);
-
-       res.status(200).json({
-           pendingOrders: pendingCount,
-           activeOrders: activeCount,
-           completedOrders: completedCount
-       });
-
+       res.status(200).json({ pendingOrders: pendingCount, activeOrders: activeCount, completedOrders: completedCount });
    } catch (err) {
-       // Log the error regardless of type
        error(`❌ Error fetching order stats for user ${req.user?._id}:`, err);
-       // Check if it's specifically a CastError (though it shouldn't be now)
-       if (err.name === 'CastError') {
-            warn(`[getOrderStats] Received unexpected CastError for user ${req.user?._id}. Check middleware/schema alignment.`);
-            return res.status(400).json({ message: 'Invalid user identifier format.' }); // More specific if cast error reappears
-       }
-       // General error
+       if (err.name === 'CastError') { warn(`[getOrderStats] Unexpected CastError user ${req.user?._id}.`); return res.status(400).json({ message: 'Invalid user identifier format.' }); }
        res.status(500).json({ message: 'Stats fetch failed', error: err.message });
    }
 };
@@ -304,31 +350,20 @@ export const getUserOrders = async (req, res) => {
     info("[getUserOrders] Function called.");
     try {
         const userMongoId = req.user?._id; // Use MongoDB _id
-        if (!userMongoId) {
-             return res.status(401).json({ message: 'Unauthorized: User session invalid.' });
-        }
+        if (!userMongoId) { return res.status(401).json({ message: 'Unauthorized: User session invalid.' }); }
         let page = parseInt(req.query.page) || 1; let limit = parseInt(req.query.limit) || 10; if (page < 1) page = 1; if (limit < 1) limit = 1; if (limit > 100) limit = 100; const skip = (page - 1) * limit;
-
         info(`[getUserOrders] Fetching orders for user MongoDB ID ${userMongoId}, P:${page}, L:${limit}`);
         const [orders, totalOrders] = await Promise.all([
             Order.find({ userId: userMongoId }) // Query with MongoDB _id
                  .select('-paymentStatus -errorMessage -userId -pesapalTrackingId -pesapalOrderId -callbackUrlUsed -__v')
-                 .sort({ createdAt: -1 })
-                 .skip(skip)
-                 .limit(limit)
-                 .lean(),
+                 .sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
             Order.countDocuments({ userId: userMongoId }) // Query with MongoDB _id
         ]);
-
         info(`[getUserOrders] Found ${orders.length}/${totalOrders} orders.`);
         res.status(200).json({ orders, page, pages: Math.ceil(totalOrders / limit), total: totalOrders });
     } catch (err) {
          error(`❌ Error fetching orders user ${req.user?._id}:`, err);
-         // Check for CastError specifically
-         if (err.name === 'CastError') {
-            warn(`[getUserOrders] Received unexpected CastError for user ${req.user?._id}. Check middleware/schema alignment.`);
-            return res.status(400).json({ message: 'Invalid user identifier format.' });
-         }
+         if (err.name === 'CastError') { warn(`[getUserOrders] Unexpected CastError user ${req.user?._id}.`); return res.status(400).json({ message: 'Invalid user identifier format.' }); }
          res.status(500).json({ message: 'Order fetch failed', error: err.message });
     }
 };
@@ -338,35 +373,26 @@ export const getOrderDetails = async (req, res) => {
     info("[getOrderDetails] Function called.");
     try {
         const userMongoId = req.user?._id; // Use MongoDB _id
-        const orderId = req.params.id; // This is the Order's _id (ObjectId)
+        const orderId = req.params.id; // Order's _id (ObjectId)
         if (!userMongoId) { return res.status(401).json({ message: 'Unauthorized.' }); }
-        if (!mongoose.Types.ObjectId.isValid(orderId)) { info(`[getOrderDetails] Invalid Order ID format: ${orderId}`); return res.status(400).json({ message: 'Invalid Order ID.' }); }
-
+        if (!mongoose.Types.ObjectId.isValid(orderId)) { info(`[getOrderDetails] Invalid Order ID: ${orderId}`); return res.status(400).json({ message: 'Invalid Order ID.' }); }
         info(`[getOrderDetails] Fetching order ${orderId} for user MongoDB ID ${userMongoId}`);
-        // Query by Order's _id (ObjectId) and User's _id (ObjectId)
-        const order = await Order.findOne({ _id: orderId, userId: userMongoId }).select('-userId -__v');
-
+        const order = await Order.findOne({ _id: orderId, userId: userMongoId }).select('-userId -__v'); // Query with Order ObjectId and User ObjectId
         if (!order) { info(`[getOrderDetails] Order ${orderId} not found/denied user ${userMongoId}.`); return res.status(404).json({ message: 'Order not found or access denied.' }); }
         info(`[getOrderDetails] Success for Order ID ${orderId}`); res.status(200).json(order);
     } catch (err) {
         error(`❌ Error fetching details order ${req.params.id}, User ${req.user?._id}:`, err);
-         if (err.name === 'CastError') {
-            // This could happen if orderId is invalid format, already checked by isValid
-            // Or if userMongoId was somehow not an ObjectId (should be caught earlier)
-            warn(`[getOrderDetails] Received unexpected CastError. OrderID: ${req.params.id}, UserID: ${req.user?._id}.`);
-            return res.status(400).json({ message: 'Invalid identifier format during lookup.' });
-         }
+         if (err.name === 'CastError') { warn(`[getOrderDetails] Unexpected CastError.`); return res.status(400).json({ message: 'Invalid identifier format.' }); }
         res.status(500).json({ message: 'Details fetch failed', error: err.message });
     }
 };
 
 /** Get Order Status by Merchant Reference (Callback Page) */
 export const getOrderStatusByReference = async (req, res) => {
-    // This function uses pesapalOrderId (string) so no change needed here
     info("[getOrderStatusByReference] Function called."); try { const { merchantRef } = req.params; info(`[getOrderStatusByReference] Ref: ${merchantRef}`); if (!merchantRef) { error("[getOrderStatusByReference] Missing merchantRef."); return res.status(400).json({ message: 'Order reference required.' }); } const order = await Order.findOne({ pesapalOrderId: merchantRef }).select('status paymentStatus _id supplierStatus'); if (!order) { info(`[getOrderStatusByReference] Order not found Ref ${merchantRef}`); return res.status(404).json({ message: 'Order not found.' }); } info(`[getOrderStatusByReference] Success Ref ${merchantRef}: Status='${order.status}', Payment='${order.paymentStatus}'`); res.status(200).json({ status: order.status, paymentStatus: order.paymentStatus, orderId: order._id, supplierStatus: order.supplierStatus }); } catch (err) { error(`❌ Error fetching status ref ${req.params.merchantRef}:`, err); res.status(500).json({ message: 'Status fetch failed', error: err.message }); }
 };
 
-// --- ADMIN FUNCTIONS --- (No changes needed based on userId fix)
+// --- ADMIN FUNCTIONS ---
 
 /** Get All Orders (Admin) */
 export const getAllOrdersAdmin = async (req, res) => {
