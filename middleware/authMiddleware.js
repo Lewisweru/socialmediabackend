@@ -1,7 +1,6 @@
-// middleware/authMiddleware.js (Corrected Import AGAIN)
+// middleware/authMiddleware.js (Corrected - Removed .lean())
 
-// FIX: Import the specific named export needed, not the default
-import { firebaseAdminAuth } from '../config/firebaseAdmin.js'; // Use { firebaseAdminAuth }
+import { firebaseAdminAuth } from '../config/firebaseAdmin.js';
 import User from '../models/User.js';
 import { info, warn, error, debug } from '../utils/logger.js';
 
@@ -20,11 +19,11 @@ export const protect = async (req, res, next) => {
       token = authHeader.split(' ')[1];
       if (!token) {
         warn(`[Auth Protect - ${requestPath}] Token format invalid.`);
+        // Ensure response is sent and function exits
         return res.status(401).json({ message: 'Not authorized, token format invalid' });
       }
 
       debug(`[Auth Protect - ${requestPath}] Verifying Firebase ID Token...`);
-      // FIX: Use the imported firebaseAdminAuth object
       const decodedToken = await firebaseAdminAuth.verifyIdToken(token);
       const firebaseUserId = decodedToken.uid; // This is the Firebase UID string
       debug(`[Auth Protect - ${requestPath}] Token verified for Firebase UID: ${firebaseUserId}`);
@@ -33,33 +32,41 @@ export const protect = async (req, res, next) => {
       info(`[Auth Protect - ${requestPath}] Searching DB for user with firebaseUid: ${firebaseUserId}`);
       let mongoUser = null;
       try {
-          // Ensure this uses the correct field 'firebaseUid'
-          mongoUser = await User.findOne({ firebaseUid: firebaseUserId }).select('-password').lean();
+          // FIX: Remove .lean() to get full Mongoose document instead of plain object
+          mongoUser = await User.findOne({ firebaseUid: firebaseUserId }).select('-password');
       } catch (dbError) {
            error(`[Auth Protect - ${requestPath}] Database error during findOne({ firebaseUid: ${firebaseUserId} }):`, dbError);
+           // Ensure response is sent and function exits
            return res.status(500).json({ message: 'Database error during authentication.' });
       }
 
       // Check if User Found and Log Result
       if (!mongoUser) {
         warn(`[Auth Protect - ${requestPath}] User UID ${firebaseUserId} verified, but NOT found in DB.`);
-        return res.status(401).json({ message: 'User not found in application database.' }); // Changed message
+        // Ensure response is sent and function exits
+        return res.status(401).json({ message: 'User not found in application database.' });
       } else {
-        info(`[Auth Protect - ${requestPath}] Found user in DB via firebaseUid.`);
-        debug(`[Auth Protect - ${requestPath}] mongoUser object found:`, JSON.stringify(mongoUser, null, 2));
+        info(`[Auth Protect - ${requestPath}] Found user document in DB via firebaseUid.`);
+        // Log the Mongoose document's _id directly
+        // Mongoose documents have an _id property which should be the ObjectId
+        debug(`[Auth Protect - ${requestPath}] mongoUser object found (Mongoose doc). _id: ${mongoUser._id}`);
         if (!mongoUser._id) {
+             // This check is still valid, even without .lean()
              error(`[Auth Protect CRITICAL - ${requestPath}] Found user document BUT it's missing the _id field! UID: ${firebaseUserId}`);
+             // Ensure response is sent and function exits
              return res.status(500).json({ message: 'User data integrity issue.' });
         } else {
-             debug(`[Auth Protect - ${requestPath}] mongoUser._id is present: ${mongoUser._id}`);
+             // Log the type as well, it should be 'object' for a Mongoose doc _id (ObjectId)
+             debug(`[Auth Protect - ${requestPath}] mongoUser._id is present: ${mongoUser._id} (Type: ${typeof mongoUser._id})`);
         }
       }
 
-      // Assign to req.user
-      req.user = mongoUser; // Assign the plain JS object
-      info(`[Auth Protect - ${requestPath}] Assigned found user to req.user. Type: ${typeof req.user}, Has _id: ${!!req.user?._id}`);
+      // Assign the full Mongoose document to req.user
+      req.user = mongoUser;
+      // Log after assignment, checking req.user._id directly
+      info(`[Auth Protect - ${requestPath}] Assigned found user (Mongoose doc) to req.user. User _id: ${req.user?._id} (Type: ${typeof req.user?._id})`);
 
-      // Proceed
+      // Proceed to next middleware/controller ONLY if user is found and assigned
       debug(`[Auth Protect - ${requestPath}] Calling next().`);
       next();
 
