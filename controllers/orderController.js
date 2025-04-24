@@ -184,35 +184,77 @@ export const initiateOrderAndPayment = async (req, res) => {
 };
 
 /** Handle Pesapal IPN */
+// controllers/orderController.js
+
 export const handleIpn = async (req, res) => {
-    const ipnBody = req.body || {}; const orderTrackingId = ipnBody.OrderTrackingId || ipnBody.orderTrackingId || ''; const notificationType = ipnBody.OrderNotificationType || ipnBody.orderNotificationType || ''; const merchantReference = ipnBody.OrderMerchantReference || ipnBody.orderMerchantReference || '';
-    const ipnResponse = { orderNotificationType: notificationType, orderTrackingId: orderTrackingId, orderMerchantReference: merchantReference, status: 500 };
-    info(`--- Received IPN --- Ref: ${merchantReference}, Tracking: ${orderTrackingId}, Type: ${notificationType}`); debug(`IPN Body:`, JSON.stringify(ipnBody, null, 2)); if (!orderTrackingId || notificationType.toUpperCase() !== 'IPNCHANGE' || !merchantReference) { error(`[IPN Validation Error - Ref ${merchantReference}]`); return res.status(200).json(ipnResponse); }
+    const ipnBody = req.body || {};
+    const orderTrackingId = ipnBody.OrderTrackingId || ipnBody.orderTrackingId || '';
+    const notificationType = ipnBody.OrderNotificationType || ipnBody.orderNotificationType || '';
+    const merchantReference = ipnBody.OrderMerchantReference || ipnBody.orderMerchantReference || ''; // Our pesapalOrderId
+    const ipnResponse = { /* ... default response ... */ };
+
+    // ---> ADD LOG 1 <---
+    info(`[handleIpn ENTRY] Ref: ${merchantReference}, Tracking: ${orderTrackingId}, Type: ${notificationType}`);
+    debug(`[handleIpn BODY]`, JSON.stringify(ipnBody, null, 2));
+
+    if (!orderTrackingId || notificationType.toUpperCase() !== 'IPNCHANGE' || !merchantReference) {
+        error(`[handleIpn Validation Error] Ref: ${merchantReference}`);
+        return res.status(200).json(ipnResponse);
+    }
+
     let order = null; let transactionStatusData = null;
     try {
-        info(`[IPN Processing - Ref ${merchantReference}] Searching Order...`);
-        order = await Order.findOne({ pesapalOrderId: merchantReference }); if (!order) { error(`[IPN Error - Ref ${merchantReference}] Not found.`); ipnResponse.status = 404; return res.status(200).json(ipnResponse); } info(`[IPN Processing - Ref ${merchantReference}] Found Order ${order._id}. Status: ${order.status}`);
-        info(`[IPN Processing - Order ${order._id}] Querying Pesapal Status ID: ${orderTrackingId}`); const token = await pesapalService.getOAuthToken(); transactionStatusData = await pesapalService.getTransactionStatus(token, orderTrackingId); info(`[IPN Processing - Order ${order._id}] Pesapal Status Resp:`, transactionStatusData); const fetchedPesapalStatus = transactionStatusData?.payment_status_description?.toUpperCase() || 'UNKNOWN'; const fetchedPesapalDesc = transactionStatusData?.description || '';
+        // ---> ADD LOG 2 <---
+        info(`[handleIpn - Ref ${merchantReference}] Searching Order in DB...`);
+        order = await Order.findOne({ pesapalOrderId: merchantReference });
+        if (!order) { /* ... handle not found ... */ }
+         // ---> ADD LOG 3 <---
+        info(`[handleIpn - Ref ${merchantReference}] Found Order ${order._id}. Current Status: ${order.status}, Payment Status: ${order.paymentStatus}`);
+
+        // ---> ADD LOG 4 <---
+        info(`[handleIpn - Order ${order._id}] Querying Pesapal Status (Tracking ID: ${orderTrackingId})...`);
+        const token = await pesapalService.getOAuthToken();
+        transactionStatusData = await pesapalService.getTransactionStatus(token, orderTrackingId);
+         // ---> ADD LOG 5 <---
+        info(`[handleIpn - Order ${order._id}] Pesapal Status Response Received:`, transactionStatusData);
+        const fetchedPesapalStatus = transactionStatusData?.payment_status_description?.toUpperCase() || 'UNKNOWN';
+
         let internalStatusUpdate = order.status; let shouldSaveChanges = false; let newErrorMessage = order.errorMessage;
-        if ((order.paymentStatus !== fetchedPesapalStatus) && fetchedPesapalStatus !== 'UNKNOWN') { info(`[IPN - Order ${order._id}] Updating paymentStatus -> '${fetchedPesapalStatus}'`); order.paymentStatus = fetchedPesapalStatus; shouldSaveChanges = true; }
-        // Only trigger supplier if order is still pending payment or failed previously
+         // ---> ADD LOG 6 <---
+        info(`[handleIpn - Order ${order._id}] Processing Pesapal Status: ${fetchedPesapalStatus}`);
+
+        // --- Update stored Pesapal payment status ---
+        if ((order.paymentStatus !== fetchedPesapalStatus) && fetchedPesapalStatus !== 'UNKNOWN') { info(`[handleIpn - Order ${order._id}] Updating DB paymentStatus -> '${fetchedPesapalStatus}'`); order.paymentStatus = fetchedPesapalStatus; shouldSaveChanges = true; }
+
+        // --- Determine internal status changes ---
         if (order.status === 'Pending Payment' || order.status === 'Payment Failed') {
-             switch (fetchedPesapalStatus) {
-                 case 'COMPLETED': info(`[IPN Update - Order ${order._id}] COMPLETED. Placing supplier order...`); internalStatusUpdate = await placeSupplierOrderAndUpdateStatus(order); newErrorMessage = (internalStatusUpdate === 'Supplier Error') ? order.supplierStatus : null; shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] Supplier result: '${internalStatusUpdate}'.`); break;
-                 case 'FAILED': internalStatusUpdate = 'Payment Failed'; newErrorMessage = fetchedPesapalDesc || 'Payment Failed (IPN)'; shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] FAILED.`); break;
-                 case 'INVALID': case 'REVERSED': internalStatusUpdate = 'Cancelled'; newErrorMessage = `Payment ${fetchedPesapalStatus}. ${fetchedPesapalDesc || ''}`.trim(); shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] ${fetchedPesapalStatus} -> Cancelled.`); break;
-                 case 'PENDING': info(`[IPN Info - Order ${order._id}] PENDING.`); break; default: warn(`[IPN Info - Order ${order._id}] Unhandled status: '${fetchedPesapalStatus}'.`);
+            switch (fetchedPesapalStatus) {
+                case 'COMPLETED':
+                     // ---> ADD LOG 7 <---
+                    info(`[handleIpn - Order ${order._id}] Pesapal COMPLETED. Calling placeSupplierOrderAndUpdateStatus...`);
+                    internalStatusUpdate = await placeSupplierOrderAndUpdateStatus(order); // This helper has its own logs now
+                     // ---> ADD LOG 8 <---
+                    info(`[handleIpn - Order ${order._id}] placeSupplierOrderAndUpdateStatus returned: ${internalStatusUpdate}`);
+                    newErrorMessage = (internalStatusUpdate === 'Supplier Error') ? order.supplierStatus : null;
+                    shouldSaveChanges = true;
+                    break;
+                // ... other cases ...
+                case 'FAILED': internalStatusUpdate = 'Payment Failed'; /*...*/ info(`[handleIpn - Order ${order._id}] FAILED.`); shouldSaveChanges = true; break;
+                case 'INVALID': case 'REVERSED': internalStatusUpdate = 'Cancelled'; /*...*/ info(`[handleIpn - Order ${order._id}] -> Cancelled.`); shouldSaveChanges = true; break;
+                case 'PENDING': info(`[handleIpn - Order ${order._id}] PENDING.`); break;
+                default: warn(`[handleIpn - Order ${order._id}] Unhandled status: '${fetchedPesapalStatus}'.`);
             }
-            // Apply status change if internalStatusUpdate changed from original order.status
             if (order.status !== internalStatusUpdate) {
-                 order.status = internalStatusUpdate; order.errorMessage = newErrorMessage; info(`[IPN Update - Order ${order._id}] Internal status -> '${order.status}'.`);
-                 // Ensure shouldSaveChanges is true if status changed
-                 shouldSaveChanges = true;
+                order.status = internalStatusUpdate; order.errorMessage = newErrorMessage;
+                // ---> ADD LOG 9 <---
+                info(`[handleIpn - Order ${order._id}] Internal status CHANGED to -> '${order.status}'.`);
+                shouldSaveChanges = true; // Ensure flag is set
             }
-        } else { info(`[IPN Info - Order ${order._id}] Status '${order.status}' not modified by IPN.`); }
-        if (shouldSaveChanges) { info(`[IPN Processing - Order ${order._id}] Saving...`); await order.save(); info(`[IPN Processed - Order ${order._id}] Save OK. Status: ${order.status}`); ipnResponse.status = 200; } else { info(`[IPN Info - Order ${order._id}] No DB changes.`); ipnResponse.status = 200; }
-        info(`[IPN Response Sent - Order ${order._id}]: ${JSON.stringify(ipnResponse)}`); res.status(200).json(ipnResponse);
-    } catch (err) { error(`❌ IPN Error Ref ${merchantReference}:`, err); ipnResponse.status = 500; res.status(200).json(ipnResponse); }
+        } else { info(`[handleIpn - Order ${order._id}] Internal status '${order.status}' not modified.`); }
+
+        if (shouldSaveChanges) { /* ... save ... */ } else { /* ... log no changes ... */ }
+        res.status(200).json(ipnResponse);
+    } catch (err) { /* ... error handling ... */ }
 };
 
 /** Get Order Stats (User) - CORRECTED */
