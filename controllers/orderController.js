@@ -111,14 +111,14 @@ export const initiateOrderAndPayment = async (req, res) => {
 
     try {
         const { platform, service, quality, accountLink, quantity, currency = 'KES', callbackUrl } = req.body;
-        const userId = req.user?._id; // Use the MongoDB _id attached by 'protect' middleware
+        const userMongoId = req.user?._id; // Use the MongoDB _id attached by 'protect' middleware
         const userEmail = req.user?.email;
         const userName = req.user?.name || req.user?.displayName || `${req.user?.firstName || 'Valued'} ${req.user?.lastName || 'Customer'}`;
 
         // Basic Validation
-        if (!userId) { error("[Initiate Order] Missing User ID."); return res.status(401).json({ message: 'Unauthorized.' }); }
+        if (!userMongoId) { error("[Initiate Order] Missing User ID."); return res.status(401).json({ message: 'Unauthorized.' }); }
         const parsedQuantity = parseInt(quantity, 10);
-        if (!platform || !service || !quality || !accountLink || !parsedQuantity || parsedQuantity <= 0 || !callbackUrl) { error(`[Initiate Order] Missing params user ${userId}`, req.body); return res.status(400).json({ message: 'Missing details.' }); }
+        if (!platform || !service || !quality || !accountLink || !parsedQuantity || parsedQuantity <= 0 || !callbackUrl) { error(`[Initiate Order] Missing params user ${userMongoId}`, req.body); return res.status(400).json({ message: 'Missing details.' }); }
         if (!REGISTERED_IPN_ID) { error("[Initiate Order] Server Misconfig - IPN ID"); return res.status(500).json({ message: 'Server config error [IPN].' }); }
 
         // Pre-check with Supplier Service Details (uses HQ/LQ mapping internally now)
@@ -142,7 +142,7 @@ export const initiateOrderAndPayment = async (req, res) => {
         const orderDescription = `${parsedQuantity} ${quality} ${platform} ${service}`;
         const orderData = {
             pesapalOrderId,
-            userId: userId, // Store the MongoDB ObjectId
+            userId: userMongoId, // Store the MongoDB ObjectId
             platform: String(platform).toLowerCase(), service: String(service), quality: String(quality),
             accountLink: String(accountLink), quantity: parsedQuantity, amount: calculatedAmount,
             currency: String(currency), description: String(orderDescription).substring(0, 100),
@@ -195,27 +195,41 @@ export const handleIpn = async (req, res) => {
         info(`[IPN Processing - Order ${order._id}] Querying Pesapal Status ID: ${orderTrackingId}`); const token = await pesapalService.getOAuthToken(); transactionStatusData = await pesapalService.getTransactionStatus(token, orderTrackingId); info(`[IPN Processing - Order ${order._id}] Pesapal Status Resp:`, transactionStatusData); const fetchedPesapalStatus = transactionStatusData?.payment_status_description?.toUpperCase() || 'UNKNOWN'; const fetchedPesapalDesc = transactionStatusData?.description || '';
         let internalStatusUpdate = order.status; let shouldSaveChanges = false; let newErrorMessage = order.errorMessage;
         if ((order.paymentStatus !== fetchedPesapalStatus) && fetchedPesapalStatus !== 'UNKNOWN') { info(`[IPN - Order ${order._id}] Updating paymentStatus -> '${fetchedPesapalStatus}'`); order.paymentStatus = fetchedPesapalStatus; shouldSaveChanges = true; }
-        if (order.status === 'Pending Payment' || order.status === 'Payment Failed') { switch (fetchedPesapalStatus) { case 'COMPLETED': info(`[IPN Update - Order ${order._id}] COMPLETED. Placing supplier order...`); internalStatusUpdate = await placeSupplierOrderAndUpdateStatus(order); newErrorMessage = (internalStatusUpdate === 'Supplier Error') ? order.supplierStatus : null; shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] Supplier result: '${internalStatusUpdate}'.`); break; case 'FAILED': internalStatusUpdate = 'Payment Failed'; newErrorMessage = fetchedPesapalDesc || 'Payment Failed (IPN)'; shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] FAILED.`); break; case 'INVALID': case 'REVERSED': internalStatusUpdate = 'Cancelled'; newErrorMessage = `Payment ${fetchedPesapalStatus}. ${fetchedPesapalDesc || ''}`.trim(); shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] ${fetchedPesapalStatus} -> Cancelled.`); break; case 'PENDING': info(`[IPN Info - Order ${order._id}] PENDING.`); break; default: warn(`[IPN Info - Order ${order._id}] Unhandled status: '${fetchedPesapalStatus}'.`); } if (order.status !== internalStatusUpdate) { order.status = internalStatusUpdate; order.errorMessage = newErrorMessage; info(`[IPN Update - Order ${order._id}] Internal status -> '${order.status}'.`); } } else { info(`[IPN Info - Order ${order._id}] Status '${order.status}' not modified.`); }
+        // Only trigger supplier if order is still pending payment or failed previously
+        if (order.status === 'Pending Payment' || order.status === 'Payment Failed') {
+             switch (fetchedPesapalStatus) {
+                 case 'COMPLETED': info(`[IPN Update - Order ${order._id}] COMPLETED. Placing supplier order...`); internalStatusUpdate = await placeSupplierOrderAndUpdateStatus(order); newErrorMessage = (internalStatusUpdate === 'Supplier Error') ? order.supplierStatus : null; shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] Supplier result: '${internalStatusUpdate}'.`); break;
+                 case 'FAILED': internalStatusUpdate = 'Payment Failed'; newErrorMessage = fetchedPesapalDesc || 'Payment Failed (IPN)'; shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] FAILED.`); break;
+                 case 'INVALID': case 'REVERSED': internalStatusUpdate = 'Cancelled'; newErrorMessage = `Payment ${fetchedPesapalStatus}. ${fetchedPesapalDesc || ''}`.trim(); shouldSaveChanges = true; info(`[IPN Update - Order ${order._id}] ${fetchedPesapalStatus} -> Cancelled.`); break;
+                 case 'PENDING': info(`[IPN Info - Order ${order._id}] PENDING.`); break; default: warn(`[IPN Info - Order ${order._id}] Unhandled status: '${fetchedPesapalStatus}'.`);
+            }
+            // Apply status change if internalStatusUpdate changed from original order.status
+            if (order.status !== internalStatusUpdate) {
+                 order.status = internalStatusUpdate; order.errorMessage = newErrorMessage; info(`[IPN Update - Order ${order._id}] Internal status -> '${order.status}'.`);
+                 // Ensure shouldSaveChanges is true if status changed
+                 shouldSaveChanges = true;
+            }
+        } else { info(`[IPN Info - Order ${order._id}] Status '${order.status}' not modified by IPN.`); }
         if (shouldSaveChanges) { info(`[IPN Processing - Order ${order._id}] Saving...`); await order.save(); info(`[IPN Processed - Order ${order._id}] Save OK. Status: ${order.status}`); ipnResponse.status = 200; } else { info(`[IPN Info - Order ${order._id}] No DB changes.`); ipnResponse.status = 200; }
         info(`[IPN Response Sent - Order ${order._id}]: ${JSON.stringify(ipnResponse)}`); res.status(200).json(ipnResponse);
     } catch (err) { error(`❌ IPN Error Ref ${merchantReference}:`, err); ipnResponse.status = 500; res.status(200).json(ipnResponse); }
 };
 
-/** Get Order Stats (User) */
+/** Get Order Stats (User) - CORRECTED */
 export const getOrderStats = async (req, res) => {
    info("[getOrderStats] Function called.");
    try {
-       // FIX: Use the MongoDB _id from the attached req.user object
+       // Use the MongoDB _id from the attached req.user object
        const userMongoId = req.user?._id; // This should be the MongoDB ObjectId
 
-       info(`[getOrderStats] User MongoDB ID from middleware: ${userMongoId}`); // Log the correct ID
+       info(`[getOrderStats] User MongoDB ID from middleware: ${userMongoId}`);
 
        if (!userMongoId) {
            error("[getOrderStats] Error: MongoDB User ID (_id) not found on req.user.");
            return res.status(401).json({ message: 'Unauthorized: User session invalid or user data missing.' });
        }
 
-       // FIX: Query using the correct MongoDB ObjectId
+       // Query using the correct MongoDB ObjectId
        info(`[getOrderStats] Querying counts for userId (MongoDB ObjectId): ${userMongoId}`);
        const [pendingCount, activeCount, completedCount] = await Promise.all([
            Order.countDocuments({ userId: userMongoId, status: { $in: ['Pending Payment', 'Payment Failed']} }),
@@ -231,16 +245,23 @@ export const getOrderStats = async (req, res) => {
        });
 
    } catch (err) {
+       // Log the error regardless of type
        error(`❌ Error fetching order stats for user ${req.user?._id}:`, err);
+       // Check if it's specifically a CastError (though it shouldn't be now)
+       if (err.name === 'CastError') {
+            warn(`[getOrderStats] Received unexpected CastError for user ${req.user?._id}. Check middleware/schema alignment.`);
+            return res.status(400).json({ message: 'Invalid user identifier format.' }); // More specific if cast error reappears
+       }
+       // General error
        res.status(500).json({ message: 'Stats fetch failed', error: err.message });
    }
 };
 
-/** Get User Orders (Paginated) */
+/** Get User Orders (Paginated) - CORRECTED */
 export const getUserOrders = async (req, res) => {
     info("[getUserOrders] Function called.");
     try {
-        const userMongoId = req.user?._id; // FIX: Use MongoDB _id
+        const userMongoId = req.user?._id; // Use MongoDB _id
         if (!userMongoId) {
              return res.status(401).json({ message: 'Unauthorized: User session invalid.' });
         }
@@ -248,48 +269,66 @@ export const getUserOrders = async (req, res) => {
 
         info(`[getUserOrders] Fetching orders for user MongoDB ID ${userMongoId}, P:${page}, L:${limit}`);
         const [orders, totalOrders] = await Promise.all([
-            Order.find({ userId: userMongoId }) // FIX: Query with MongoDB _id
+            Order.find({ userId: userMongoId }) // Query with MongoDB _id
                  .select('-paymentStatus -errorMessage -userId -pesapalTrackingId -pesapalOrderId -callbackUrlUsed -__v')
                  .sort({ createdAt: -1 })
                  .skip(skip)
                  .limit(limit)
                  .lean(),
-            Order.countDocuments({ userId: userMongoId }) // FIX: Query with MongoDB _id
+            Order.countDocuments({ userId: userMongoId }) // Query with MongoDB _id
         ]);
 
         info(`[getUserOrders] Found ${orders.length}/${totalOrders} orders.`);
         res.status(200).json({ orders, page, pages: Math.ceil(totalOrders / limit), total: totalOrders });
-    } catch (err) { error(`❌ Error fetching orders user ${req.user?._id}:`, err); res.status(500).json({ message: 'Order fetch failed', error: err.message }); }
+    } catch (err) {
+         error(`❌ Error fetching orders user ${req.user?._id}:`, err);
+         // Check for CastError specifically
+         if (err.name === 'CastError') {
+            warn(`[getUserOrders] Received unexpected CastError for user ${req.user?._id}. Check middleware/schema alignment.`);
+            return res.status(400).json({ message: 'Invalid user identifier format.' });
+         }
+         res.status(500).json({ message: 'Order fetch failed', error: err.message });
+    }
 };
 
-/** Get Single Order Details (User) */
+/** Get Single Order Details (User) - CORRECTED */
 export const getOrderDetails = async (req, res) => {
     info("[getOrderDetails] Function called.");
     try {
-        const userMongoId = req.user?._id; // FIX: Use MongoDB _id
-        const orderId = req.params.id;
+        const userMongoId = req.user?._id; // Use MongoDB _id
+        const orderId = req.params.id; // This is the Order's _id (ObjectId)
         if (!userMongoId) { return res.status(401).json({ message: 'Unauthorized.' }); }
-        if (!mongoose.Types.ObjectId.isValid(orderId)) { info(`[getOrderDetails] Invalid ID: ${orderId}`); return res.status(400).json({ message: 'Invalid Order ID.' }); }
+        if (!mongoose.Types.ObjectId.isValid(orderId)) { info(`[getOrderDetails] Invalid Order ID format: ${orderId}`); return res.status(400).json({ message: 'Invalid Order ID.' }); }
 
         info(`[getOrderDetails] Fetching order ${orderId} for user MongoDB ID ${userMongoId}`);
-        // FIX: Query with MongoDB _id for userId
+        // Query by Order's _id (ObjectId) and User's _id (ObjectId)
         const order = await Order.findOne({ _id: orderId, userId: userMongoId }).select('-userId -__v');
 
-        if (!order) { info(`[getOrderDetails] Order ${orderId} not found/denied user ${userMongoId}.`); return res.status(404).json({ message: 'Order not found/access denied.' }); }
+        if (!order) { info(`[getOrderDetails] Order ${orderId} not found/denied user ${userMongoId}.`); return res.status(404).json({ message: 'Order not found or access denied.' }); }
         info(`[getOrderDetails] Success for Order ID ${orderId}`); res.status(200).json(order);
-    } catch (err) { error(`❌ Error fetching details order ${req.params.id}, User ${req.user?._id}:`, err); res.status(500).json({ message: 'Details fetch failed', error: err.message }); }
+    } catch (err) {
+        error(`❌ Error fetching details order ${req.params.id}, User ${req.user?._id}:`, err);
+         if (err.name === 'CastError') {
+            // This could happen if orderId is invalid format, already checked by isValid
+            // Or if userMongoId was somehow not an ObjectId (should be caught earlier)
+            warn(`[getOrderDetails] Received unexpected CastError. OrderID: ${req.params.id}, UserID: ${req.user?._id}.`);
+            return res.status(400).json({ message: 'Invalid identifier format during lookup.' });
+         }
+        res.status(500).json({ message: 'Details fetch failed', error: err.message });
+    }
 };
 
 /** Get Order Status by Merchant Reference (Callback Page) */
 export const getOrderStatusByReference = async (req, res) => {
+    // This function uses pesapalOrderId (string) so no change needed here
     info("[getOrderStatusByReference] Function called."); try { const { merchantRef } = req.params; info(`[getOrderStatusByReference] Ref: ${merchantRef}`); if (!merchantRef) { error("[getOrderStatusByReference] Missing merchantRef."); return res.status(400).json({ message: 'Order reference required.' }); } const order = await Order.findOne({ pesapalOrderId: merchantRef }).select('status paymentStatus _id supplierStatus'); if (!order) { info(`[getOrderStatusByReference] Order not found Ref ${merchantRef}`); return res.status(404).json({ message: 'Order not found.' }); } info(`[getOrderStatusByReference] Success Ref ${merchantRef}: Status='${order.status}', Payment='${order.paymentStatus}'`); res.status(200).json({ status: order.status, paymentStatus: order.paymentStatus, orderId: order._id, supplierStatus: order.supplierStatus }); } catch (err) { error(`❌ Error fetching status ref ${req.params.merchantRef}:`, err); res.status(500).json({ message: 'Status fetch failed', error: err.message }); }
 };
 
-// --- ADMIN FUNCTIONS ---
+// --- ADMIN FUNCTIONS --- (No changes needed based on userId fix)
 
 /** Get All Orders (Admin) */
 export const getAllOrdersAdmin = async (req, res) => {
-    info(`[getAllOrdersAdmin] Admin: ${req.user?._id}`); try { const filter = {}; if (req.query.status) { const OrderStatusEnum = ['Pending Payment', 'Payment Failed', 'Processing', 'In Progress', 'Completed', 'Partial', 'Cancelled', 'Refunded', 'Supplier Error', 'Expired']; const requestedStatus = req.query.status; if (typeof requestedStatus === 'string' && OrderStatusEnum.includes(requestedStatus)) { filter.status = requestedStatus; } else if (typeof requestedStatus === 'string') { warn(`[getAllOrdersAdmin] Invalid status filter: ${requestedStatus}`); return res.status(400).json({ message: `Invalid status: ${requestedStatus}` }); } } let page = parseInt(req.query.page) || 1; let limit = parseInt(req.query.limit) || 25; if (page < 1) page = 1; if (limit < 1) limit = 10; if (limit > 100) limit = 100; const skip = (page - 1) * limit; info(`[getAllOrdersAdmin] Querying. Filter: ${JSON.stringify(filter)}, P:${page}, L:${limit}`); const [orders, totalOrders] = await Promise.all([ Order.find(filter).populate('userId', 'email name username').sort({ createdAt: -1 }).skip(skip).limit(limit).lean(), Order.countDocuments(filter) ]); info(`[getAllOrdersAdmin] Found ${orders.length}/${totalOrders}.`); res.status(200).json({ orders, page, pages: Math.ceil(totalOrders / limit), total: totalOrders }); } catch (err) { error(`❌ Error fetching all orders admin ${req.user?._id}:`, err); res.status(500).json({ message: 'Fetch orders failed', error: err.message }); }
+    info(`[getAllOrdersAdmin] Admin: ${req.user?._id}`); try { const filter = {}; if (req.query.status) { const OrderStatusEnum = ['Pending Payment', 'Payment Failed', 'Processing', 'In Progress', 'Completed', 'Partial', 'Cancelled', 'Refunded', 'Supplier Error', 'Expired']; const requestedStatus = req.query.status; if (typeof requestedStatus === 'string' && OrderStatusEnum.includes(requestedStatus)) { filter.status = requestedStatus; } else if (typeof requestedStatus === 'string') { warn(`[getAllOrdersAdmin] Invalid status filter: ${requestedStatus}`); return res.status(400).json({ message: `Invalid status: ${requestedStatus}` }); } } let page = parseInt(req.query.page) || 1; let limit = parseInt(req.query.limit) || 25; if (page < 1) page = 1; if (limit < 1) limit = 10; if (limit > 100) limit = 100; const skip = (page - 1) * limit; info(`[getAllOrdersAdmin] Querying. Filter: ${JSON.stringify(filter)}, P:${page}, L:${limit}`); const [orders, totalOrders] = await Promise.all([ Order.find(filter).populate('userId', 'email name username firebaseUid').sort({ createdAt: -1 }).skip(skip).limit(limit).lean(), Order.countDocuments(filter) ]); info(`[getAllOrdersAdmin] Found ${orders.length}/${totalOrders}.`); res.status(200).json({ orders, page, pages: Math.ceil(totalOrders / limit), total: totalOrders }); } catch (err) { error(`❌ Error fetching all orders admin ${req.user?._id}:`, err); res.status(500).json({ message: 'Fetch orders failed', error: err.message }); }
 };
 
 /** Update Order Status (Admin) */

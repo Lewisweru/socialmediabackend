@@ -1,16 +1,16 @@
-// models/Order.js (ESM)
-import mongoose from 'mongoose'; // Use import
+// models/Order.js (Corrected userId Type)
+import mongoose from 'mongoose';
 const { Schema } = mongoose;
 
-// Define OrderStatus values (as strings for direct use in enum)
-// Export if needed elsewhere
-export const OrderStatusEnum = [
-  'Pending Payment', 'Payment Failed', 'Processing', 'In Progress',
-  'Completed', 'Partial', 'Cancelled', 'Refunded', 'Supplier Error', 'Expired'
-];
+export const OrderStatusEnum = [ /* ... enum values ... */ ];
 
 const OrderSchema = new Schema({
-  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+  userId: {
+    type: String, // <<< CHANGE: Use String to store the Firebase UID
+    required: true,
+    index: true
+    // ref: 'User' // <<< REMOVE or comment out: 'ref' works best with ObjectIds
+  },
   pesapalOrderId: { type: String, required: true, unique: true, index: true },
   pesapalTrackingId: { type: String, index: true },
   platform: { type: String, required: true, lowercase: true },
@@ -20,17 +20,12 @@ const OrderSchema = new Schema({
   quantity: { type: Number, required: true, min: 1 },
   amount: { type: Number, required: true, min: 0 },
   currency: { type: String, required: true, default: 'KES' },
-  status: {
-    type: String,
-    enum: OrderStatusEnum,
-    required: true,
-    default: 'Pending Payment',
-    index: true
-  },
+  status: { type: String, enum: OrderStatusEnum, required: true, default: 'Pending Payment', index: true },
   paymentStatus: { type: String },
-  supplierOrderId: { type: String }, // Added field
-  supplierStatus: { type: String },  // Added field
+  supplierOrderId: { type: String },
+  supplierStatus: { type: String },
+  errorMessage: { type: String }, // Added based on controller code
+  callbackUrlUsed: { type: String } // Added based on controller code
 }, { timestamps: true });
 
-// Use export default for the model
 export default mongoose.model('Order', OrderSchema);
