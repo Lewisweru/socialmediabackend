@@ -1,8 +1,9 @@
-// middleware/authMiddleware.js (Corrected User Lookup for Option 1)
+// middleware/authMiddleware.js (Corrected Import from firebaseAdmin.js)
 
-import admin from '../config/firebaseAdmin.js'; // Correct path assumed
-import User from '../models/User.js';           // Correct path assumed
-import { info, warn, error, debug } from '../utils/logger.js'; // Assuming logger exists
+// FIX: Import the named export 'firebaseAdminAuth'
+import { firebaseAdminAuth } from '../config/firebaseAdmin.js';
+import User from '../models/User.js';
+import { info, warn, error, debug } from '../utils/logger.js';
 
 /**
  * @description Middleware to verify Firebase ID Token. Attaches MongoDB user doc to req.user.
@@ -20,25 +21,24 @@ export const protect = async (req, res, next) => {
       }
 
       debug('[Auth Protect] Verifying Firebase ID Token...');
-      const decodedToken = await admin.auth().verifyIdToken(token);
-      const firebaseUserId = decodedToken.uid; // This is the Firebase UID string (e.g., '3Nr...')
+      // Use the correctly imported named export
+      const decodedToken = await firebaseAdminAuth.verifyIdToken(token);
+      const firebaseUserId = decodedToken.uid;
       debug(`[Auth Protect] Token verified for Firebase UID: ${firebaseUserId}`);
 
-      // FIX: Find user by the dedicated 'firebaseUid' field now
+      // Find user by the dedicated 'firebaseUid' field
       info(`[Auth Protect] Searching DB for user with firebaseUid: ${firebaseUserId}`);
-      const mongoUser = await User.findOne({ firebaseUid: firebaseUserId }).select('-password'); // Find by firebaseUid
+      const mongoUser = await User.findOne({ firebaseUid: firebaseUserId }).select('-password');
 
       if (!mongoUser) {
-        // User authenticated with Firebase, but no matching record in our DB via firebaseUid
         warn(`[Auth Protect] User UID ${firebaseUserId} verified, but NOT found in local DB via firebaseUid field.`);
         return res.status(401).json({ message: 'User not fully registered or synchronized' });
       }
-      // SUCCESS: mongoUser is the full Mongoose document, including its MongoDB _id
       debug(`[Auth Protect] Found user in DB. MongoDB _id: ${mongoUser._id}, Firebase UID: ${mongoUser.firebaseUid}`);
 
-      // Attach the full MongoDB user document (with its _id) to req.user
+      // Attach the full MongoDB user document (with its MongoDB _id) to req.user
       req.user = mongoUser;
-      next(); // Proceed to the next middleware/route handler
+      next(); // Proceed
 
     } catch (err) { // Handle Firebase verification errors
       error('[Auth Protect] Token verification failed:', err.code || 'Unknown Code', err.message);
@@ -52,13 +52,12 @@ export const protect = async (req, res, next) => {
       res.status(statusCode).json({ message: errorMessage });
     }
   } else {
-    // No Authorization header or incorrect format
     warn('[Auth Protect] No token provided or invalid format.');
     res.status(401).json({ message: 'Not authorized, no token provided or invalid format' });
   }
 };
 
-// Optional: isAdmin middleware (Unchanged, relies on req.user being set correctly by 'protect')
+// Optional: isAdmin middleware (Unchanged)
 /*
 export const isAdmin = (req, res, next) => {
   if (req.user && req.user.role === 'admin') {
