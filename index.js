@@ -36,10 +36,12 @@ try {
     process.exit(1);
 }
 
-// --- Security Middleware ---
-app.use(helmet()); // Apply security headers
+// === Security Middleware ===
+// Helmet (Basic security headers)
+app.use(helmet());
 
 // Trust Proxy Headers (Important for deployments like Render/Heroku)
+// Adjust '1' if you have more proxies in front
 const trustProxyLevel = parseInt(process.env.TRUST_PROXY_LEVEL || '1', 10);
 app.set('trust proxy', trustProxyLevel);
 info(`Trusting proxy headers (level: ${trustProxyLevel})`);
@@ -59,20 +61,27 @@ const corsOptions = {
 app.use(cors(corsOptions));
 info(`CORS configured to allow origin: ${corsOptions.origin}`);
 
-// Rate Limiting (Apply globally or more selectively)
-const apiLimiter = rateLimit({
+// Rate Limiting Configuration
+const rateLimitOptions = {
 	windowMs: 15 * 60 * 1000, // 15 minutes
-	max: process.env.NODE_ENV === 'development' ? 500 : 150, // More requests in dev, adjust as needed
+	max: process.env.NODE_ENV === 'development' ? 500 : 150, // Max requests per windowMs (adjust as needed)
 	standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
 	legacyHeaders: false, // Disable the `X-RateLimit-*` headers
     message: { message: 'Too many requests from this IP, please try again after 15 minutes', code: 'RATE_LIMITED' },
-    keyGenerator: (req, res) => req.ip // Use IP address for rate limiting
-});
-app.use('/api/', apiLimiter); // Apply to all /api routes
-info(`Global API rate limiting enabled (${apiLimiter.options.max} requests per ${apiLimiter.options.windowMs / 60000} minutes per IP)`);
+    keyGenerator: (req, res) => req.ip // Use IP address (ensure trust proxy is set correctly)
+};
+
+// Create the limiter instance
+const apiLimiter = rateLimit(rateLimitOptions);
+
+// Apply limiter to API routes
+app.use('/api/', apiLimiter);
+
+// Log the configuration using the stored options object
+info(`Global API rate limiting enabled (${rateLimitOptions.max} requests per ${rateLimitOptions.windowMs / 60000} minutes per IP)`);
 
 
-// --- Standard Middleware ---
+// === Standard Middleware ===
 // Request Logging (Morgan)
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev')); // 'combined' for prod, 'dev' for dev
 
@@ -85,7 +94,7 @@ app.use(cookieParser());
 
 // --- REMOVED Session Middleware ---
 
-// --- Application Setup (Async IIFE) ---
+// === Application Setup (Async IIFE) ===
 (async () => {
     try {
         // Connect to Database by awaiting the promise from db.js
@@ -174,7 +183,7 @@ app.use(cookieParser());
     }
 })(); // End of IIFE
 
-// Optional: Handle unhandled promise rejections and uncaught exceptions gracefully
+// Optional: Graceful shutdown and process error handling
 process.on('unhandledRejection', (reason, promise) => {
   error('Unhandled Rejection at:', promise, 'reason:', reason);
   // Consider more sophisticated error reporting (e.g., Sentry)
