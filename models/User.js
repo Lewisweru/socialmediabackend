@@ -1,13 +1,13 @@
+// --- START OF FILE models/User.js --- (Corrected)
 import mongoose from 'mongoose';
 
 const userSchema = new mongoose.Schema(
   {
-    // Keep MongoDB's default _id, but link primarily via firebaseUid
     firebaseUid: {
       type: String,
       required: [true, 'Firebase UID is required'],
       unique: true,
-      index: true // Ensure efficient lookups
+      index: true
     },
     username: {
       type: String,
@@ -23,17 +23,17 @@ const userSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       lowercase: true,
-      match: [/.+\@.+\..+/, 'Please enter a valid email address'], // Basic email format validation
+      match: [/.+\@.+\..+/, 'Please enter a valid email address'],
       index: true
     },
-    name: { // User's display name (can come from Firebase profile)
+    name: {
         type: String,
         trim: true
     },
-    profilePic: { // URL to profile picture (can come from Firebase profile)
+    profilePic: {
         type: String,
         trim: true,
-        default: '/images/default-profile.png' // Example default, make configurable
+        default: '/images/default-profile.png'
     },
     country: {
       type: String,
@@ -48,21 +48,12 @@ const userSchema = new mongoose.Schema(
       },
       default: 'user'
     },
-    // Add any other non-auth fields specific to your application here
-    // e.g., balance: { type: Number, default: 0 }
-
   },
   {
-    timestamps: true // Automatically add createdAt and updatedAt
+    timestamps: true
   }
 );
 
-// REMOVED password hashing pre-save hook
-
-// Optional: Ensure necessary indexes exist (redundant if specified in schema, but doesn't hurt)
-userSchema.index({ firebaseUid: 1 });
-userSchema.index({ email: 1 });
-userSchema.index({ username: 1 });
-
 const User = mongoose.model("User", userSchema);
 export default User;
+// --- END OF FILE models/User.js ---
