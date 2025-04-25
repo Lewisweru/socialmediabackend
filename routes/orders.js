@@ -1,35 +1,28 @@
-// routes/orders.js (Complete - Uses correct controller function names)
+// routes/orders.js (Keep as provided by user - looks correct)
 import express from 'express';
-// Import controller functions explicitly using their CORRECT exported names
 import {
-    initiateOrderAndPayment,     // Matches export from controller
-    getOrderStatusByReference, // Matches export from controller
-    getUserOrders,             // Matches export from controller
-    getOrderStats,             // Matches export from controller
-    getOrderDetails            // Matches export from controller
+    initiateOrderAndPayment,
+    getOrderStatusByReference,
+    getUserOrders,
+    getOrderStats,
+    getOrderDetails,
     // Import admin functions if needed for admin routes below
-    // getAllOrdersAdmin,
-    // updateOrderStatusAdmin
+    getAllAdminOrders,
+    updateOrderStatusAdmin
 } from '../controllers/orderController.js'; // Use .js extension
-
-// Import the named export 'protect' from your authentication middleware
-import { protect } from '../middleware/authMiddleware.js';
-// Import admin middleware if you add admin routes that require it
-// import { isAdmin } from '../middleware/authMiddleware.js';
+import { protect, isAdmin } from '../middleware/authMiddleware.js'; // Import protect and isAdmin
 
 const router = express.Router();
 
 // --- User Facing Order Routes (Protected) ---
 router.post('/initiate', protect, initiateOrderAndPayment);
-router.get('/status/:merchantReference', protect, getOrderStatusByReference); // Callback check needs auth
+router.get('/status-by-ref/:merchantReference', protect, getOrderStatusByReference); // Callback check needs auth if user-specific
 router.get('/my-orders', protect, getUserOrders);
-router.get('/stats', protect, getOrderStats);
-router.get('/:id', protect, getOrderDetails); // Get specific order by DB ID
+router.get('/stats', protect, getOrderStats);       // User getting their own stats
+router.get('/:id', protect, getOrderDetails);       // User getting their own order details
 
-// --- Admin Order Routes (Example - Requires protect + isAdmin) ---
-// Uncomment and adjust if you implement these
-// router.get('/admin/all', protect, isAdmin, getAllOrdersAdmin);
-// router.put('/admin/status/:id', protect, isAdmin, updateOrderStatusAdmin);
+// --- Admin Order Routes (Protected + Admin Check) ---
+router.get('/admin/all', protect, isAdmin, getAllAdminOrders);
+router.put('/admin/:orderId/status', protect, isAdmin, updateOrderStatusAdmin); // Use :orderId to match controller likely
 
-// Use export default for the router
 export default router;

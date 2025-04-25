@@ -1,30 +1,29 @@
-// models/User.js
 import mongoose from 'mongoose';
-// import bcrypt from 'bcrypt'; // REMOVED - Firebase handles passwords
 
 const userSchema = new mongoose.Schema(
   {
-    // Use firebaseUid as the primary link, but keep MongoDB's default _id
+    // Keep MongoDB's default _id, but link primarily via firebaseUid
     firebaseUid: {
       type: String,
-      required: true,
+      required: [true, 'Firebase UID is required'],
       unique: true,
       index: true // Ensure efficient lookups
     },
     username: {
       type: String,
-      required: true,
+      required: [true, 'Username is required'],
       unique: true,
       trim: true,
-      index: true
+      index: true,
+      minlength: [3, 'Username must be at least 3 characters long']
     },
     email: {
       type: String,
-      required: true,
+      required: [true, 'Email is required'],
       unique: true,
       trim: true,
       lowercase: true,
-      match: /.+\@.+\..+/, // Basic email format validation
+      match: [/.+\@.+\..+/, 'Please enter a valid email address'], // Basic email format validation
       index: true
     },
     name: { // User's display name (can come from Firebase profile)
@@ -34,7 +33,7 @@ const userSchema = new mongoose.Schema(
     profilePic: { // URL to profile picture (can come from Firebase profile)
         type: String,
         trim: true,
-        default: '/images/default-profile.png' // Example default
+        default: '/images/default-profile.png' // Example default, make configurable
     },
     country: {
       type: String,
@@ -43,16 +42,14 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['user', 'admin'], // Define possible roles
+      enum: {
+          values: ['user', 'admin'],
+          message: '{VALUE} is not a supported role'
+      },
       default: 'user'
     },
-    // Add any other fields specific to your application
+    // Add any other non-auth fields specific to your application here
     // e.g., balance: { type: Number, default: 0 }
-    // e.g., orderHistory: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Order' }]
-
-    // REMOVED password field
-    // REMOVED password reset fields (handled by Firebase)
-    // REMOVED email verification fields (can use Firebase email verification status if needed)
 
   },
   {
@@ -60,7 +57,12 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// REMOVED pre-save hook for password hashing
+// REMOVED password hashing pre-save hook
+
+// Optional: Ensure necessary indexes exist (redundant if specified in schema, but doesn't hurt)
+userSchema.index({ firebaseUid: 1 });
+userSchema.index({ email: 1 });
+userSchema.index({ username: 1 });
 
 const User = mongoose.model("User", userSchema);
 export default User;

@@ -1,25 +1,31 @@
-// routes/users.js (EXAMPLE - Apply 'protect' middleware)
 import express from 'express';
-import { getUser } from '../controllers/userController.js'; // Assuming getUser is here
-import { protect } from '../middleware/authMiddleware.js'; // Import protect
+// Import specific controller functions
+import {
+    getUserProfile,
+    updateUserProfile,
+    getUserById // Keep if needed for admin or other lookups
+} from '../controllers/userController.js';
+import { protect, isAdmin } from '../middleware/authMiddleware.js';
+import { info, warn, error } from '../utils/logger.js'; // Assuming logger exists
 
 const router = express.Router();
 
-// Example: Get user profile - requires authentication
-// The :id in the route should correspond to the Firebase UID
-router.get('/:id', protect, getUser);
+// GET Current Logged-in User's Profile
+router.get('/profile/me', protect, getUserProfile);
 
-// Example: Update user profile - requires authentication and user must be self
-router.put('/:id/profile', protect, async (req, res) => {
-    // Ensure the logged-in user (req.user._id from MongoDB) matches the
-    // MongoDB user corresponding to the Firebase UID in the URL param (req.params.id).
-    // Or more simply, ensure req.user.firebaseUid === req.params.id
-    if (req.user.firebaseUid !== req.params.id) {
-         return res.status(403).json({ message: 'Forbidden: Cannot update another user profile' });
-    }
-    // ... proceed with update logic ...
-    res.json({ message: 'Profile update endpoint placeholder' });
-});
+// PUT Update Current Logged-in User's Profile
+router.put('/profile/me', protect, updateUserProfile);
 
+// --- Admin Route Example ---
+// GET User by ID (Admin Only, potentially using MongoDB _id)
+router.get(
+    '/:id', // Example: Route expects MongoDB _id
+    protect,
+    isAdmin,
+    getUserById // Controller should handle finding by req.params.id
+);
+
+// GET All Users (Admin Only)
+// router.get('/', protect, isAdmin, getAllUsers); // Implement getAllUsers in controller if needed
 
 export default router;
