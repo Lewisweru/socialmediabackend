@@ -7,7 +7,7 @@ import User from "../models/User.js";
 import { protect } from "../middleware/authMiddleware.js";
 import { info, warn, error, debug } from '../utils/logger.js';
 import { firebaseAdminAuth } from "../config/firebaseAdmin.js";
-import { sendVerificationEmail } from "../services/emailService.js";
+//import { sendVerificationEmail } from "../services/emailService.js";
 
 const router = express.Router();
 
