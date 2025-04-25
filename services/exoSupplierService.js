@@ -45,19 +45,19 @@ const normalizeKey = (str) => str ? str.toLowerCase().replace(/[^a-z0-9]/gi, '')
 // *** Verify these keys match your frontend's normalized platform + service name ***
 const FRONTEND_SERVICE_TO_SUPPLIER_IDS_MAP = {
   // --- TikTok ---
-  'tiktok_followers': { hq: 3037, lq: 3038 },
+  'tiktok_followers': { hq: 3038, lq: 3037 },
   'tiktok_likes':     { hq: 3049, lq: 3050 },
   'tiktok_views':     { hq: 3043, lq: 3044 },
 
   // --- Instagram ---
   'instagram_followers':     { hq: 2995, lq: 2994 },
   'instagram_likes':         { hq: 2999, lq: 2998 },
-  'instagram_videoreelviews':{ hq: 3007, lq: 3000 }, // Combined key - VERIFY
+  'instagram_videoviews':    { hq: 3007, lq: 3000 }, // Combined key - VERIFY
 
   // --- Facebook ---
   'facebook_pagefollowers':   { hq: 2917, lq: 2920 },
   'facebook_profilefollowers':{ hq: 2925, lq: 2924 },
-  'facebook_pagelikefollow':  { hq: 2926, lq: 2928 }, // VERIFY key
+  'facebook_pagelikesandfollowers':  { hq: 2926, lq: 2928 }, // VERIFY key
   'facebook_postlikes':       { hq: 3099, lq: 2934 },
   'facebook_videoreelviews':  { hq: 2981, lq: 2978 }, // Combined key - VERIFY
 

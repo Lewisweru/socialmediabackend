@@ -3,15 +3,16 @@ import { info, warn, error, debug } from './logger.js';
 
 // --- Pricing Data --- Updated with user-provided prices ---
 const PRICING = {
-    tiktok:    { standard: { followers: 0.50, likes: 0.07, views: 0.004 },         high: { followers: 0.55, likes: 0.09, views: 0.005 } },
-    instagram: { standard: { followers: 0.50, likes: 0.06, views: 0.01 },          high: { followers: 0.55, likes: 0.08, views: 0.02 } },
-    facebook:  { standard: { pagelikes: 2.10, profilefollowers: 1.40, postlikes: 1.10, views: 0.06 },
-                   high: { pagelikes: 2.20, profilefollowers: 1.44, postlikes: 1.13, views: 0.11 } },
-    youtube:   { standard: { subscribers: 4.50, likes: 0.30, views: 1.20 },        high: { subscribers: 5.60, likes: 1.25, views: 1.45 } },
-    telegram:  { standard: { members: 1.10, postviews: 0.03, postreactions: 0.06 }, high: { members: 2.10, postviews: 0.04, postreactions: 0.07 } },
-    whatsapp:  { standard: { channelmembers: 2.50, emojireactions: 1.20 },       high: { channelmembers: 7.60, emojireactions: 2.50 } },
-    x:         { standard: { followers: 7.60, likes: 1.90, retweets: 0.75 },       high: { followers: 7.70, likes: 2.10, retweets: 0.80 } },
-};
+    tiktok:    { standard: { followers: 0.50, likes: 0.07, views: 0.04 },         high: { followers: 0.6095, likes: 0.09, views: 0.05 } },
+    instagram: { standard: { followers: 0.50, likes: 0.06, videoviews: 0.01 },          high: { followers: 0.5977, likes: 0.08, videoviews: 0.02 } },
+    facebook:  { standard: { pagefollowers: 0.29, profilefollowers: 0.33, pagelikesandfollowers :0.47, postlikes: 0.25, videoreelviews: 0.04 },
+                   high: { pagefollowers: 0.31, profilefollowers: 0.44, pagelikesandfollowers :0.48, postlikes: 0.26, videoreelviews: 0.06 } },
+    youtube:   { standard: { subscribers: 0.99, likes: 0.10, views: 0.27 },        high: { subscribers: 1.23, likes: 0.27, views: 0.32 } },
+    telegram:  { standard: { members: 0.24, postviews: 0.02, postreactions: 0.06 }, high: { members: 0.46, postviews: 0.04, postreactions: 0.07 } },
+    whatsapp:  { standard: { channelmembers: 0.56, emojireactions: 0.28 },       high: { channelmembers: 1.72, emojireactions: 0.55 } },
+    x:         { standard: { followers: 1.73, likes: 0.42, retweets: 0.2 },       high: { followers: 1.74, likes: 0.46, retweets: 0.3 } },
+  };
+
 // --- End Pricing Data ---
 
 
