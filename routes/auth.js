@@ -1,295 +1,187 @@
+// routes/auth.js
 import express from "express";
-import bcrypt from "bcrypt";
-import rateLimit from "express-rate-limit";
 import asyncHandler from "express-async-handler";
 import { body, validationResult } from "express-validator";
 import User from "../models/User.js";
-import { protect } from "../middleware/authMiddleware.js";
-import { info, warn, error, debug } from '../utils/logger.js';
-import { firebaseAdminAuth } from "../config/firebaseAdmin.js";
-//import { sendVerificationEmail } from "../services/emailService.js";
+import { protect } from "../middleware/authMiddleware.js"; // Import protect middleware
+import { info, warn, error, debug } from '../utils/logger.js'; // Assuming logger exists
 
 const router = express.Router();
 
-// Constants
-const config = {
-  DEFAULT_PROFILE_PIC: 'default-profile.png',
-  DEFAULT_COUNTRY: 'Unknown',
-  USERNAME_PREFIX: 'user_',
-  MIN_PASSWORD_LENGTH: 8,
-  SALT_ROUNDS: parseInt(process.env.BCRYPT_SALT_ROUNDS) || 10
+// Constants for default values
+const DEFAULT_PROFILE_PIC = '/images/default-profile.png';
+const DEFAULT_COUNTRY = 'Unknown';
+const USERNAME_PREFIX = 'user_';
+
+// Helper for consistent responses
+const successRes = (res, data, status = 200) => res.status(status).json({ success: true, ...data });
+const errorRes = (res, message, status = 400, code = 'ERROR', details = null) => {
+    warn(`[AuthRoute] Error Response: ${status} - ${code} - ${message}`, details || '');
+    return res.status(status).json({ success: false, error: { message, code, details } });
 };
 
-// Rate limiters
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 requests per windowMs
-  message: 'Too many requests from this IP, please try again later'
-});
 
-const strictAuthLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5, // Very strict limit for sensitive operations
-  message: 'Too many attempts, please try again later'
-});
-
-// Response helpers
-const successRes = (res, data, status = 200) => {
-  return res.status(status).json({
-    success: true,
-    ...data
-  });
-};
-
-const errorRes = (res, message, status = 400, details = null) => {
-  return res.status(status).json({
-    success: false,
-    error: message,
-    ...(details && { details })
-  });
-};
-
-// --- Get Current User Route ---
+// --- [GET] /api/auth/current-user ---
+// Fetches the currently logged-in user's data from MongoDB
 router.get(
   '/current-user',
-  protect,
+  protect, // Ensures user is authenticated via Firebase token
   asyncHandler(async (req, res) => {
+    // req.user is attached by the 'protect' middleware and contains the MongoDB user doc
     if (!req.user) {
-      warn('[current-user] User object not found on request after protect middleware.');
-      return errorRes(res, "Authentication successful but user data unavailable", 401);
+      // This case should theoretically not be reached if 'protect' works correctly
+      warn('[GET /current-user] User object not found on request after protect middleware.');
+      return errorRes(res, "Authentication data missing after verification.", 500, 'INTERNAL_AUTH_ERROR');
     }
-    
-    info(`[current-user] Returning data for user MongoDB ID: ${req.user._id}`);
-    return successRes(res, { user: req.user });
+
+    info(`[GET /current-user] Returning data for user: ${req.user.username} (ID: ${req.user._id})`);
+    // Exclude sensitive or unnecessary fields if User model wasn't selected carefully
+    const { _id, firebaseUid, username, email, name, profilePic, country, role, createdAt } = req.user;
+    return successRes(res, {
+        user: { _id, firebaseUid, username, email, name, profilePic, country, role, createdAt }
+    });
   })
 );
 
-// --- Firebase User Sync/Create Endpoint ---
+
+// --- [POST] /api/auth/sync-firebase-user ---
+// Creates or updates a user in MongoDB based on a verified Firebase Auth session.
+// This should be called by the frontend *after* a successful Firebase login/signup.
 router.post(
-  "/firebase-user",
-  [
-    body('firebaseUid').notEmpty().isString(),
-    body('email').isEmail().normalizeEmail(),
-    body('name').optional().isString().trim(),
+  "/sync-firebase-user",
+  protect, // CRITICAL: Ensure only authenticated users can call this
+  [ // Validate any *additional* info coming from frontend (country is common)
+    body('country').optional().isString().trim().escape(),
+    body('name').optional().isString().trim().escape(), // Allow frontend to provide initial name/country
     body('profilePic').optional().isURL(),
-    body('country').optional().isString().trim()
+    // REMOVED firebaseUid, email, username from body validation - get from req.firebaseUser
   ],
   asyncHandler(async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
-      warn("[firebase-user] Validation errors:", errors.array());
-      return errorRes(res, "Validation failed", 400, errors.array());
+        warn("[POST /sync-firebase-user] Validation errors:", errors.array());
+        return errorRes(res, "Invalid input data", 400, 'VALIDATION_FAILED', errors.array());
     }
 
-    const { firebaseUid, email, name, profilePic, country } = req.body;
-    info(`[firebase-user] Sync request for UID: ${firebaseUid}, Email: ${email}`);
+    // Get authenticated user details from the protect middleware
+    const firebaseUser = req.firebaseUser; // Decoded token from Firebase
+    const mongoUserId = req.user?._id; // MongoDB user ID (if already exists)
+    const firebaseUid = firebaseUser.uid;
+    const firebaseEmail = firebaseUser.email?.toLowerCase(); // Ensure lowercase
+    const firebaseName = firebaseUser.name;
+    const firebaseProfilePic = firebaseUser.picture;
+
+    info(`[POST /sync-firebase-user] Sync request for Firebase UID: ${firebaseUid}`);
+
+    if (!firebaseUid || !firebaseEmail) {
+        error("[POST /sync-firebase-user] Missing UID or Email from verified token.");
+        return errorRes(res, "Incomplete authentication data.", 500, 'INTERNAL_AUTH_ERROR');
+    }
 
     try {
-      let user = await User.findOne({ firebaseUid });
+        let user = req.user; // User doc from MongoDB found by 'protect' middleware
+        let message = "User data synchronized.";
+        let statusCode = 200;
 
-      if (user) {
-        info(`[firebase-user] Found existing user: ${user._id}. Checking for updates.`);
-        const updates = {};
-        
-        if (name && user.name !== name) updates.name = name;
-        if (profilePic && user.profilePic !== profilePic) updates.profilePic = profilePic;
-        if (!user.username) {
-          updates.username = `${config.USERNAME_PREFIX}${firebaseUid.substring(0, 8)}`;
-          warn(`[firebase-user] Added default username: ${updates.username}`);
+        const clientProvidedName = req.body.name;
+        const clientProvidedCountry = req.body.country;
+        const clientProvidedProfilePic = req.body.profilePic;
+
+        if (!user) {
+            // User exists in Firebase, but not yet in MongoDB - Create new user
+            info(`[POST /sync-firebase-user] User not found in DB, creating new entry for UID: ${firebaseUid}`);
+
+            // Generate a default username if none provided (less common now)
+            const username = `${USERNAME_PREFIX}${firebaseUid.substring(0, 8)}`;
+            debug(`[POST /sync-firebase-user] Generated username: ${username}`);
+
+            // Basic check if generated username exists (rare edge case)
+            const usernameExists = await User.exists({ username });
+            if (usernameExists) {
+                warn(`[POST /sync-firebase-user] Generated username ${username} conflicts. Need a better strategy.`);
+                // Consider appending random chars or prompting user later
+                // For now, return an error or use a different default
+                 return errorRes(res, "Username conflict during sync.", 500, 'USERNAME_CONFLICT');
+            }
+
+            user = new User({
+                _id: new mongoose.Types.ObjectId(), // Use standard MongoDB ObjectId
+                firebaseUid: firebaseUid,
+                email: firebaseEmail,
+                username: username, // Use generated username
+                // Prefer client-provided name/country/pic first, then Firebase profile, then defaults
+                name: clientProvidedName || firebaseName || username,
+                country: clientProvidedCountry || DEFAULT_COUNTRY,
+                profilePic: clientProvidedProfilePic || firebaseProfilePic || DEFAULT_PROFILE_PIC,
+                role: 'user' // Default role
+            });
+
+            await user.save();
+            info(`[POST /sync-firebase-user] New user created in MongoDB: ${user._id}`);
+            message = "User account created and synchronized.";
+            statusCode = 201;
+
+        } else {
+            // User exists in MongoDB - Check for necessary updates
+            info(`[POST /sync-firebase-user] Found existing user: ${user._id}. Checking for updates.`);
+            const updates = {};
+
+            // Update name/pic/country if provided by client or different from Firebase profile
+            const nameToSet = clientProvidedName || firebaseName;
+            if (nameToSet && user.name !== nameToSet) updates.name = nameToSet;
+
+            const picToSet = clientProvidedProfilePic || firebaseProfilePic;
+            if (picToSet && user.profilePic !== picToSet) updates.profilePic = picToSet;
+
+            const countryToSet = clientProvidedCountry || user.country; // Keep existing if client doesn't provide
+            if (countryToSet && countryToSet !== 'Unknown' && user.country !== countryToSet) updates.country = countryToSet;
+
+            // Ensure email is up-to-date (Firebase is source of truth)
+             if (user.email !== firebaseEmail) {
+                updates.email = firebaseEmail;
+                warn(`[POST /sync-firebase-user] Updating email for user ${user._id} to ${firebaseEmail}`);
+            }
+
+            // Only update if there are changes
+            if (Object.keys(updates).length > 0) {
+                debug(`[POST /sync-firebase-user] Applying updates to user ${user._id}:`, updates);
+                const updatedUser = await User.findByIdAndUpdate(user._id, { $set: updates }, { new: true, lean: true });
+                 if (!updatedUser) {
+                     error(`[POST /sync-firebase-user] Failed to apply updates for user ${user._id}`);
+                     return errorRes(res, "Failed to update user data during sync.", 500, 'DB_UPDATE_FAILED');
+                 }
+                user = updatedUser; // Use the updated user data
+                info(`[POST /sync-firebase-user] User details updated in MongoDB: ${user._id}`);
+                message = "User data updated and synchronized.";
+            } else {
+                 info(`[POST /sync-firebase-user] No updates needed for user: ${user._id}`);
+            }
         }
-        
-        const countryToSet = country || user.country || config.DEFAULT_COUNTRY;
-        if (user.country !== countryToSet) updates.country = countryToSet;
 
-        if (Object.keys(updates).length > 0) {
-          user = await User.findByIdAndUpdate(user._id, updates, { new: true });
-          info(`[firebase-user] Updated details saved for user: ${user._id}`);
-        }
-      } else {
-        info(`[firebase-user] Creating new user for UID: ${firebaseUid}`);
-        const username = `${config.USERNAME_PREFIX}${firebaseUid.substring(0, 8)}`;
-        
-        user = new User({
-          firebaseUid,
-          email: email.toLowerCase(),
-          username,
-          country: country || config.DEFAULT_COUNTRY,
-          name: name || username,
-          profilePic: profilePic || config.DEFAULT_PROFILE_PIC
-        });
+        // Prepare response (exclude sensitive fields)
+        const { password, __v, ...userResponse } = user;
 
-        if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true') {
-          user.verified = false;
-          await sendVerificationEmail(user.email, user._id);
-        }
-
-        await user.save();
-        info(`[firebase-user] Created new user: ${user._id}`);
-      }
-
-      // Prepare response
-      const userResponse = user.toObject();
-      delete userResponse.password;
-      delete userResponse.__v;
-
-      return successRes(res, { 
-        message: "User sync/creation successful", 
-        user: userResponse 
-      });
+        return successRes(res, {
+          message,
+          user: userResponse
+        }, statusCode);
 
     } catch (err) {
-      error("❌ Error in /firebase-user endpoint:", err);
-
-      if (err.code === 11000) {
-        const field = Object.keys(err.keyValue)[0];
-        warn(`[firebase-user] Duplicate key error: ${field}`);
-        return errorRes(res, `Account with this ${field} already exists`, 409);
-      }
-
-      if (err.name === 'ValidationError') {
-        const messages = Object.values(err.errors).map(val => val.message);
-        error("[firebase-user] Validation Error:", messages);
-        return errorRes(res, "Validation failed", 400, messages);
-      }
-
-      return errorRes(res, "Internal Server Error", 500);
+        error("❌ Error in /sync-firebase-user endpoint:", err);
+        // Handle potential database errors (like unique constraint if username generation failed)
+        if (err.code === 11000) {
+            const field = Object.keys(err.keyValue)[0];
+            warn(`[POST /sync-firebase-user] Duplicate key error on field: ${field}`);
+             // This might happen if two requests race to create the user, or username conflict
+            return errorRes(res, `An account conflict occurred (${field}). Please try logging in again.`, 409, 'SYNC_CONFLICT');
+        }
+        return errorRes(res, "Internal Server Error during user sync.", 500, 'INTERNAL_SERVER_ERROR');
     }
   })
 );
 
-// --- Email/Password Signup Route ---
-router.post(
-  "/create-user",
-  authLimiter,
-  [
-    body('firebaseUid').notEmpty().isString(),
-    body('email').isEmail().normalizeEmail(),
-    body('password')
-      .isLength({ min: config.MIN_PASSWORD_LENGTH })
-      .matches(/(?=.*\d)(?=.*[a-z])(?=.*[A-Z]).{8,}/),
-    body('username').notEmpty().isString().trim(),
-    body('country').optional().isString().trim(),
-    body('name').optional().isString().trim(),
-    body('profilePic').optional().isURL()
-  ],
-  asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      warn("[create-user] Validation errors:", errors.array());
-      return errorRes(res, "Validation failed", 400, errors.array());
-    }
 
-    const { firebaseUid, email, password, username, country, name, profilePic } = req.body;
-    info("[create-user] Request received for UID:", firebaseUid);
-
-    try {
-      // Check existing users
-      const existingUser = await User.findOne({ 
-        $or: [
-          { firebaseUid },
-          { email: email.toLowerCase() },
-          { username: username.trim() }
-        ]
-      });
-
-      if (existingUser) {
-        warn(`[create-user] User exists: ${existingUser._id}`);
-        const field = existingUser.firebaseUid === firebaseUid ? 'Account' : 
-                     (existingUser.email === email.toLowerCase() ? 'Email' : 'Username');
-        return errorRes(res, `${field} already exists`, 409);
-      }
-
-      // Hash password
-      const hashedPassword = await bcrypt.hash(password, config.SALT_ROUNDS);
-      debug(`[create-user] Password hashed for ${firebaseUid}`);
-
-      // Create user
-      const newUser = new User({
-        firebaseUid,
-        email: email.toLowerCase(),
-        password: hashedPassword,
-        username: username.trim(),
-        country: country || config.DEFAULT_COUNTRY,
-        name: name || username.trim(),
-        profilePic: profilePic || config.DEFAULT_PROFILE_PIC
-      });
-
-      if (process.env.REQUIRE_EMAIL_VERIFICATION === 'true') {
-        newUser.verified = false;
-        await sendVerificationEmail(newUser.email, newUser._id);
-      }
-
-      await newUser.save();
-      info(`[create-user] User created: ${newUser._id}`);
-
-      // Prepare response
-      const userResponse = newUser.toObject();
-      delete userResponse.password;
-      delete userResponse.__v;
-
-      return successRes(res, { 
-        message: "User created successfully", 
-        user: userResponse 
-      }, 201);
-
-    } catch (err) {
-      error("❌ Error in /create-user:", err);
-
-      if (err.code === 11000) {
-        const field = Object.keys(err.keyPattern)[0];
-        warn(`[create-user] Duplicate key error: ${field}`);
-        return errorRes(res, `${field} already exists`, 409);
-      }
-
-      if (err.name === 'ValidationError') {
-        const messages = Object.values(err.errors).map(val => val.message);
-        error("[create-user] Validation Error:", messages);
-        return errorRes(res, "Validation failed", 400, messages);
-      }
-
-      return errorRes(res, "Internal Server Error", 500);
-    }
-  })
-);
-
-// --- Password Reset Request ---
-router.post(
-  "/request-password-reset",
-  strictAuthLimiter,
-  [body('email').isEmail().normalizeEmail()],
-  asyncHandler(async (req, res) => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return errorRes(res, "Invalid email", 400);
-    }
-
-    const { email } = req.body;
-    info(`[password-reset] Request for: ${email}`);
-
-    try {
-      const user = await User.findOne({ email: email.toLowerCase() });
-      if (!user) {
-        warn(`[password-reset] Email not found: ${email}`);
-        return successRes(res, { message: "If an account exists, a reset email was sent" });
-      }
-
-      // Generate and save reset token
-      const resetToken = crypto.randomBytes(32).toString('hex');
-      user.resetToken = {
-        token: resetToken,
-        expires: new Date(Date.now() + parseInt(process.env.PASSWORD_RESET_EXPIRY || '3600000'))
-      };
-      await user.save();
-
-      // Send email
-      await sendPasswordResetEmail(email, resetToken);
-      return successRes(res, { message: "Password reset email sent" });
-
-    } catch (err) {
-      error("❌ Error in /request-password-reset:", err);
-      return errorRes(res, "Internal Server Error", 500);
-    }
-  })
-);
+// --- REMOVED /create-user route ---
+// --- REMOVED /request-password-reset route ---
 
 export default router;
