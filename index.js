@@ -85,10 +85,17 @@ app.use(cookieParser());
         await loadExoSupplierServices();
         info('External services loaded.');
 
+     
+
         // === Route Mounting ===
         info('Mounting API routes...');
+
+        app.use('/api/orders', pesapalRoutes); // Add this temporarily
+
+
         app.use('/api/auth', authRoutes);
         app.use('/api/orders', orderRoutes);
+      
         app.use('/api/pesapal', pesapalRoutes);
         app.use('/api/users', userRoutes);
         info('API routes mounted.');
